@@ -1317,14 +1317,6 @@ private fun LogRow(
                 Checkbox(selected, null, Modifier.size(20.dp))
                 Spacer(Modifier.width(10.dp))
             }
-            StatGlyph(protocolAsset(e.protocol), 18, Palette.Muted)
-            Spacer(Modifier.width(6.dp))
-            if (e.rrType.isNotBlank()) Text(
-                e.rrType, fontSize = 10.sp, color = Palette.Muted, maxLines = 1,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.width(44.dp).clip(RoundedCornerShape(50)).background(FieldFill).padding(vertical = 1.dp),
-            )
-            Box(Modifier.padding(horizontal = 7.dp).width(1.dp).height(14.dp).background(Palette.Outline))
             if (redirect != null && (e.action == Do.REDIRECT || e.action == Do.SPOOF)) FlagIcon(redirect.country, 17)
             else LogActionGlyph(e.action, 17)
             if (e.trigger in setOf("default", "filter", "service", "custom")) {
@@ -1338,6 +1330,10 @@ private fun LogRow(
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(stampFmt.format(Date(e.epochMs)), style = MaterialTheme.typography.labelSmall, color = Palette.Muted)
+            // Record type and protocol go with the time, leaving the first line to the action and the domain.
+            if (e.rrType.isNotBlank()) Text(" · ${e.rrType}", style = MaterialTheme.typography.labelSmall, color = Palette.Muted, maxLines = 1)
+            Spacer(Modifier.width(5.dp))
+            StatGlyph(protocolAsset(e.protocol), 16, Palette.Muted)
             Spacer(Modifier.width(8.dp))
             Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 device?.let { DeviceGlyph(it.icon, 14, Palette.Muted); Spacer(Modifier.width(4.dp)) }
