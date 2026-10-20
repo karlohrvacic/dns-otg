@@ -510,7 +510,7 @@ private fun AccountScreen(nav: NavHostController, onLogout: () -> Unit) {
             )
 
             // One tap asks the launcher to place a widget; launchers that can't get the long-press way instead.
-            SectionHeader("Widgets")
+            SectionHeader("Widgets (beta)")
             fun addWidget(wide: Boolean) {
                 if (!com.controldmanager.app.widget.pinWidget(ctx, wide))
                     showToast(ctx, "Long-press your home screen, tap Widgets and find DNS OTG")

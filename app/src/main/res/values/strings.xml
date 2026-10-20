@@ -2,6 +2,6 @@
     <string name="app_name">DNS OTG</string>
     <string name="widget_small_label">DNS OTG stats</string>
     <string name="widget_wide_label">DNS OTG activity</string>
-    <string name="widget_small_description">Blocked share and query counts</string>
-    <string name="widget_wide_description">Blocked share with an activity chart</string>
+    <string name="widget_small_description">Beta: blocked share and query counts</string>
+    <string name="widget_wide_description">Beta: blocked share with an activity chart</string>
 </resources>

@@ -153,10 +153,15 @@ class WidgetConfigActivity : ComponentActivity() {
                 },
         ) {
             Column(Modifier.fillMaxSize().statusBarsPadding()) {
-                Text(
-                    "Widget settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = Palette.Teal,
-                    modifier = Modifier.padding(start = 24.dp, top = 24.dp, bottom = 20.dp),
-                )
+                Row(Modifier.padding(start = 24.dp, top = 24.dp, bottom = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Widget settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = Palette.Teal)
+                    Spacer(Modifier.width(10.dp))
+                    // Widgets are new and still changing.
+                    Text(
+                        "BETA", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Palette.Teal,
+                        modifier = Modifier.clip(RoundedCornerShape(50)).border(1.dp, Palette.Teal, RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                }
                 Box(
                     Modifier.padding(horizontal = 12.dp).fillMaxWidth().height(260.dp).onGloballyPositioned { hole = it.boundsInRoot() },
                     contentAlignment = Alignment.Center,
