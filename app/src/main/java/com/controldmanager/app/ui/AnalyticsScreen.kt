@@ -97,7 +97,6 @@ private val protocols = listOf(
 )
 
 private const val PREF_REGION = "analytics_region"
-private const val PREF_LIVE = "activity_log_live"
 
 private fun prefs(ctx: Context) = ctx.getSharedPreferences("controldmanager_ui", Context.MODE_PRIVATE)
 
@@ -958,7 +957,8 @@ private fun ActivityLogView(
     var open by remember { mutableStateOf<LogEntry?>(null) }
     val rowSeq = remember { longArrayOf(0) }
     fun numbered(rows: List<LogEntry>) = rows.map { it.copy(seq = ++rowSeq[0]) }
-    var liveOn by remember { mutableStateOf(prefs(ctx).getBoolean(PREF_LIVE, false)) }
+    // Off each time the log opens: a stream left on from last time would start using data straight away.
+    var liveOn by remember { mutableStateOf(false) }
     val liveWanted = liveOn && !range.custom
     var live by remember { mutableStateOf(LiveState.Off) }
     var sheet by remember { mutableStateOf<String?>(null) }
@@ -1175,10 +1175,7 @@ private fun ActivityLogView(
                     live == LiveState.Failed -> liveRetry++
                     // "Live · 12 new": take the reader up to them.
                     live == LiveState.On && newAbove > 0 -> loadScope.launch { listState.animateScrollToItem(0) }
-                    else -> {
-                        liveOn = !liveOn
-                        prefs(ctx).edit().putBoolean(PREF_LIVE, liveOn).apply()
-                    }
+                    else -> liveOn = !liveOn
                 }
             }
             val ep = query.endpointId?.let(deviceOf)
