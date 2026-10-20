@@ -50,6 +50,30 @@ fun CdApp() {
             mutableStateOf(TokenStore.load(ctx)?.let { (t, org) -> Session(ControlDApi(t, org), org) })
         }
         val snackbar = remember { SnackbarHostState() }
+        // The last crash, if there was one: shown once so it can be copied into a bug report.
+        var crash by remember { mutableStateOf(com.controldmanager.app.CrashLog.read(ctx)) }
+        crash?.let { report ->
+            val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+            fun close() { com.controldmanager.app.CrashLog.clear(ctx); crash = null }
+            CdDialog(
+                onDismissRequest = { close() },
+                title = { Text("DNS OTG crashed last time") },
+                text = {
+                    Column {
+                        Text("Sorry about that. Copy the details below and send them to the developer, so it can be fixed.", color = Palette.Muted)
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            report, style = MaterialTheme.typography.labelSmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            modifier = Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(report)); showToast(ctx, "Copied"); close() }) { Text("Copy") }
+                },
+                dismissButton = { TextButton(onClick = { close() }) { Text("Close") } },
+            )
+        }
         CompositionLocalProvider(LocalSnackbar provides snackbar) {
             val s = session
             if (s == null) {
