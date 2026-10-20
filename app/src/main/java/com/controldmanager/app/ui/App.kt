@@ -143,6 +143,13 @@ private fun MainScaffold(onLogout: () -> Unit) {
         LocalDialogHost provides dialogHost,
         LocalBottomBarSpace provides if (onTab) FloatingNavHeight + navInset else 0.dp,
     ) {
+    // A widget was tapped: go to Analytics, which then shows Statistics for the widget's range.
+    LaunchedEffect(OpenRequest.statsRange) {
+        if (OpenRequest.statsRange != null) nav.navigate("analytics") {
+            popUpTo(nav.graph.startDestinationId) { saveState = true }
+            launchSingleTop = true
+        }
+    }
     // Themed root background, so screens without their own (e.g. Preferences) follow light / dark.
     Box(Modifier.fillMaxSize().background(Palette.Bg)) {
         // Screens end above the keyboard, so the field being typed in scrolls into view instead of hiding under it.

@@ -132,6 +132,19 @@ private val shapes = Shapes(
     extraSmall = CdShape, small = CdShape, medium = CdShape, large = CdShape, extraLarge = CdShape,
 )
 
+/** Where a widget tap should land: Statistics for the widget's range (label, seconds), then cleared. */
+object OpenRequest {
+    const val EXTRA_RANGE = "dnsotg.stats_range"
+    const val EXTRA_SECONDS = "dnsotg.stats_seconds"
+    var statsRange by mutableStateOf<Pair<String, Long>?>(null)
+
+    fun from(intent: android.content.Intent?) {
+        val label = intent?.getStringExtra(EXTRA_RANGE) ?: return
+        statsRange = label to intent.getLongExtra(EXTRA_SECONDS, 86_400)
+        intent.removeExtra(EXTRA_RANGE)
+    }
+}
+
 /** "system", "light" or "dark" (saved on this device). */
 object ThemePref {
     private const val KEY = "theme"

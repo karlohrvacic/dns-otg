@@ -113,6 +113,14 @@ fun AnalyticsScreen(nav: NavHostController) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var rangeIdx by rememberSaveable { mutableIntStateOf(1) }
     var range by remember { mutableStateOf(TimeRange.presets[1]) }
+    // Opened from a widget: Statistics, for the widget's period (a year isn't a preset, so it shows as a custom range).
+    LaunchedEffect(OpenRequest.statsRange) {
+        val (label, seconds) = OpenRequest.statsRange ?: return@LaunchedEffect
+        OpenRequest.statsRange = null
+        tab = 0
+        rangeIdx = TimeRange.presets.indexOfFirst { it.label == label }
+        range = if (rangeIdx >= 0) TimeRange.presets[rangeIdx].refreshed() else TimeRange(label, seconds, custom = true)
+    }
     var pickDates by remember { mutableStateOf(false) }
     val refresh = { range = range.refreshed() }
     // The Activity log puts its search / export / copy buttons in this header.

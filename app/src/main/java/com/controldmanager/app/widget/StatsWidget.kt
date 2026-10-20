@@ -3,6 +3,7 @@ package com.controldmanager.app.widget
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -67,6 +68,7 @@ import com.controldmanager.app.api.Do
 import com.controldmanager.app.api.StatScope
 import com.controldmanager.app.api.TimeRange
 import com.controldmanager.app.api.TokenStore
+import com.controldmanager.app.ui.OpenRequest
 import com.controldmanager.app.ui.compact
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -209,11 +211,11 @@ class StatsWidgetWideReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StatsWidget()
 }
 
-private val Small = DpSize(110.dp, 110.dp)
 private val Wide = DpSize(250.dp, 110.dp)
 
 class StatsWidget : GlanceAppWidget() {
-    override val sizeMode = SizeMode.Responsive(setOf(Small, Wide))
+    // The real size (not the nearest of a few), so the chart can be drawn to fit instead of stretched.
+    override val sizeMode = SizeMode.Exact
     override val stateDefinition: GlanceStateDefinition<*> = PreferencesGlanceStateDefinition
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -226,7 +228,7 @@ class StatsWidget : GlanceAppWidget() {
                 val age = System.currentTimeMillis() - (prefs[WidgetKeys.updated] ?: 0L)
                 if (stats == null && prefs[WidgetKeys.error] == null || age > STALE_MS) refreshWidget(context, id)
             }
-            WidgetContent(prefs.widgetConfig(), stats, prefs[WidgetKeys.error], prefs[WidgetKeys.refreshing] == true, prefs[WidgetKeys.updated], WidgetColors(theme))
+            WidgetContent(context, prefs.widgetConfig(), stats, prefs[WidgetKeys.error], prefs[WidgetKeys.refreshing] == true, WidgetColors(theme))
         }
     }
 }
@@ -253,10 +255,17 @@ private val BypassedColor = Color(0xFF1BC99A)
 private val RedirectedColor = Color(0xFFE69201)
 
 @Composable
-private fun WidgetContent(cfg: WidgetConfig, stats: WidgetStats?, error: String?, refreshing: Boolean, updated: Long?, c: WidgetColors) {
-    val wide = LocalSize.current.width >= Wide.width
+private fun WidgetContent(context: Context, cfg: WidgetConfig, stats: WidgetStats?, error: String?, refreshing: Boolean, c: WidgetColors) {
+    val size = LocalSize.current
+    val wide = size.width >= Wide.width
+    // Tapping opens Statistics for the widget's period.
+    val open = remember(cfg.range) {
+        Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(OpenRequest.EXTRA_RANGE, cfg.range).putExtra(OpenRequest.EXTRA_SECONDS, cfg.rangeSeconds)
+    }
     Box(
-        GlanceModifier.fillMaxSize().cornerRadius(22.dp).background(c.bg).clickable(actionStartActivity<MainActivity>()).padding(12.dp),
+        GlanceModifier.fillMaxSize().cornerRadius(22.dp).background(c.bg).clickable(actionStartActivity(open)).padding(12.dp),
     ) {
         Row(GlanceModifier.fillMaxSize()) {
             Column(if (wide) GlanceModifier.width(118.dp).fillMaxHeight() else GlanceModifier.fillMaxSize()) {
@@ -280,13 +289,18 @@ private fun WidgetContent(cfg: WidgetConfig, stats: WidgetStats?, error: String?
                         RefreshButton(c)
                     }
                     if (stats != null) {
-                        Chart(stats, GlanceModifier.fillMaxWidth().defaultWeight().padding(vertical = 4.dp))
+                        // The chart's own area: the widget minus padding, the number column, the title row and the legend.
+                        val chartW = (size.width - 24.dp - 118.dp - 12.dp).value.coerceAtLeast(40f)
+                        val chartH = (size.height - 24.dp - 26.dp - 18.dp - 8.dp).value.coerceAtLeast(30f)
+                        Chart(context, stats, chartW, chartH, GlanceModifier.fillMaxWidth().defaultWeight().padding(vertical = 4.dp))
+                        // Labels only when they fit; the colours already say which is which.
+                        val labels = size.width >= 320.dp
                         Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Legend("●", compact(stats.blocked), "Block", c.red, c)
+                            Legend("●", compact(stats.blocked), "Block".takeIf { labels }, c.red, c)
                             Spacer(GlanceModifier.width(8.dp))
-                            Legend("●", compact(stats.bypassed), "Allow", c.green, c)
+                            Legend("●", compact(stats.bypassed), "Allow".takeIf { labels }, c.green, c)
                             Spacer(GlanceModifier.width(8.dp))
-                            Legend("●", compact(stats.redirected), "Redirect", c.orange, c)
+                            Legend("●", compact(stats.redirected), "Redirect".takeIf { labels }, c.orange, c)
                         }
                     } else Spacer(GlanceModifier.defaultWeight())
                 }
@@ -349,10 +363,10 @@ private fun Headline(cfg: WidgetConfig, s: WidgetStats, c: WidgetColors) {
 }
 
 @Composable
-private fun Legend(dot: String, value: String, label: String, color: ColorProvider, c: WidgetColors) {
+private fun Legend(dot: String, value: String, label: String?, color: ColorProvider, c: WidgetColors) {
     Text(dot, style = TextStyle(color = color, fontSize = 9.sp))
-    Text(" $value ", style = TextStyle(color = c.text, fontSize = 11.sp, fontWeight = FontWeight.Medium))
-    Text(label, style = TextStyle(color = c.muted, fontSize = 10.sp), maxLines = 1)
+    Text(" $value", style = TextStyle(color = c.text, fontSize = 11.sp, fontWeight = FontWeight.Medium))
+    label?.let { Text(" $it", style = TextStyle(color = c.muted, fontSize = 10.sp), maxLines = 1) }
 }
 
 internal fun share(part: Long, whole: Long): String {
@@ -361,22 +375,27 @@ internal fun share(part: Long, whole: Long): String {
     return if (p > 0 && p < 1) "<1%" else "${p.roundToInt()}%"
 }
 
-/** Widgets can't draw, so the three lines are drawn into a picture (scaled to fit). */
+/**
+ * Widgets can't draw, so the three lines are drawn into a picture at the chart area's own size ([wDp] × [hDp]),
+ * so they stay sharp and thin however the widget is sized. Capped so a huge widget stays within the memory widgets get.
+ */
 @Composable
-private fun Chart(s: WidgetStats, modifier: GlanceModifier) {
-    val bitmap = remember(s) { chartBitmap(s, 480, 200) }
+private fun Chart(context: Context, s: WidgetStats, wDp: Float, hDp: Float, modifier: GlanceModifier) {
+    val density = context.resources.displayMetrics.density
+    val scale = minOf(density, 900f / wDp, 900f / hDp)
+    val bitmap = remember(s, wDp, hDp) { chartBitmap(s, (wDp * scale).toInt(), (hDp * scale).toInt(), 2f * scale) }
     Image(ImageProvider(bitmap), "Queries over time", modifier, contentScale = ContentScale.FillBounds)
 }
 
-private fun chartBitmap(s: WidgetStats, w: Int, h: Int): Bitmap {
+private fun chartBitmap(s: WidgetStats, w: Int, h: Int, stroke: Float): Bitmap {
     val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bmp)
     val top = maxOf(1L, (s.seriesBlocked + s.seriesBypassed + s.seriesRedirected).maxOrNull() ?: 1L).toFloat()
-    val pad = 6f
+    val pad = stroke
     fun line(values: List<Long>, color: Color) {
         if (values.size < 2) return
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color.toArgb(); style = Paint.Style.STROKE; strokeWidth = 5f; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
+            this.color = color.toArgb(); style = Paint.Style.STROKE; strokeWidth = stroke; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
         }
         val path = Path()
         values.forEachIndexed { i, v ->
