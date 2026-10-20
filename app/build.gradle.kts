@@ -20,7 +20,7 @@ android {
         applicationId = "app.dnsotg"
         minSdk = 26
         targetSdk = 36
-        versionCode = 26
+        versionCode = 27
         versionName = "1.0.3"
     }
 
@@ -83,6 +83,8 @@ dependencies {
     // Home screen widgets.
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+    // Glance brings an old WorkManager whose database breaks in shrunk release builds; use a current one.
+    implementation("androidx.work:work-runtime:2.10.0")
 
     testImplementation("junit:junit:4.13.2")
     // Android's org.json is stubbed in local unit tests; this is the real implementation.
