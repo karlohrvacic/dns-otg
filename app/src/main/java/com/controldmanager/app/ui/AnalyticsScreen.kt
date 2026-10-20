@@ -958,7 +958,7 @@ private fun ActivityLogView(
     var open by remember { mutableStateOf<LogEntry?>(null) }
     val rowSeq = remember { longArrayOf(0) }
     fun numbered(rows: List<LogEntry>) = rows.map { it.copy(seq = ++rowSeq[0]) }
-    var liveOn by remember { mutableStateOf(prefs(ctx).getBoolean(PREF_LIVE, true)) }
+    var liveOn by remember { mutableStateOf(prefs(ctx).getBoolean(PREF_LIVE, false)) }
     val liveWanted = liveOn && !range.custom
     var live by remember { mutableStateOf(LiveState.Off) }
     var sheet by remember { mutableStateOf<String?>(null) }
