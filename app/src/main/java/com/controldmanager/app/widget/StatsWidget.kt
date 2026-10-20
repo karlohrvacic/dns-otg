@@ -90,7 +90,8 @@ internal data class WidgetConfig(
     val endpointName: String? = null,
     /** "app" follows the app's Appearance setting; "light" or "dark" fixes it. */
     val colours: String = "app",
-    /** Background opacity, 0 (none) to 100. */
+    /** Whether the widget has a background at all, and how opaque it is (0 to 100). */
+    val background: Boolean = true,
     val opacity: Int = 100,
 ) {
     val rangeSeconds: Long get() = WidgetRanges.firstOrNull { it.first == range }?.second ?: 86_400
@@ -114,6 +115,7 @@ internal object WidgetKeys {
     val endpointName = stringPreferencesKey("endpoint_name")
     val colours = stringPreferencesKey("colours")
     val opacity = intPreferencesKey("opacity")
+    val background = booleanPreferencesKey("background")
     /** Bumped on every settings change, so the widget loads again for the new settings. */
     val configVersion = longPreferencesKey("config_version")
     val data = stringPreferencesKey("data")
@@ -131,6 +133,7 @@ internal fun Preferences.widgetConfig() = WidgetConfig(
     endpointName = this[WidgetKeys.endpointName]?.ifBlank { null },
     colours = this[WidgetKeys.colours] ?: "app",
     opacity = this[WidgetKeys.opacity] ?: 100,
+    background = this[WidgetKeys.background] ?: true,
 )
 
 private fun WidgetStats.toJson() = JSONObject()
@@ -237,7 +240,7 @@ class StatsWidget : GlanceAppWidget() {
                 if (stats == null && prefs[WidgetKeys.error] == null || age > STALE_MS) refreshWidget(context, id)
             }
             val cfg = prefs.widgetConfig()
-            WidgetContent(context, cfg, stats, prefs[WidgetKeys.error], prefs[WidgetKeys.refreshing] == true, WidgetColors(widgetDark(context, cfg.colours), cfg.opacity))
+            WidgetContent(context, cfg, stats, prefs[WidgetKeys.error], prefs[WidgetKeys.refreshing] == true, WidgetColors(widgetDark(context, cfg.colours), if (cfg.background) cfg.opacity else 0))
         }
     }
 }

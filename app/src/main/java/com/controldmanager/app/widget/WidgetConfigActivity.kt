@@ -24,6 +24,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -43,7 +50,7 @@ import com.controldmanager.app.R
 import com.controldmanager.app.api.ControlDApi
 import com.controldmanager.app.api.TokenStore
 import com.controldmanager.app.ui.CdButton
-import com.controldmanager.app.ui.CdChip
+import com.controldmanager.app.ui.CdSwitch
 import com.controldmanager.app.ui.CdTheme
 import com.controldmanager.app.ui.GroupRow
 import com.controldmanager.app.ui.Palette
@@ -89,6 +96,7 @@ class WidgetConfigActivity : ComponentActivity() {
                                 p[WidgetKeys.endpointName] = cfg.endpointName.orEmpty()
                                 p[WidgetKeys.colours] = cfg.colours
                                 p[WidgetKeys.opacity] = cfg.opacity
+                                p[WidgetKeys.background] = cfg.background
                                 p[WidgetKeys.configVersion] = System.currentTimeMillis()
                                 p.remove(WidgetKeys.data); p.remove(WidgetKeys.error); p.remove(WidgetKeys.updated)
                             }
@@ -102,7 +110,6 @@ class WidgetConfigActivity : ComponentActivity() {
         }
     }
 
-    @OptIn(ExperimentalLayoutApi::class)
     @Composable
     private fun ConfigScreen(initial: WidgetConfig, shown: WidgetStats?, wide: Boolean, signedIn: Boolean, onSave: (WidgetConfig) -> Unit) {
         var cfg by remember { mutableStateOf(initial) }
@@ -121,69 +128,67 @@ class WidgetConfigActivity : ComponentActivity() {
             if (signedIn) runCatching { loadStats(this@WidgetConfigActivity, cfg) }.onSuccess { stats = it }
         }
         val dark = widgetDark(this, cfg.colours) ?: isSystemInDarkTheme()
-
-        Box(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxSize()) {
-                // Top: the wallpaper shows through, with the widget on it.
-                Column(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 20.dp, vertical = 16.dp)) {
-                    Text("Widget settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = Palette.Teal)
-                    Spacer(Modifier.height(16.dp))
-                    Box(Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) {
-                        WidgetPreview(cfg, stats ?: SampleStats, wide, WidgetTheme(dark))
-                    }
-                }
-                Column(
-                    Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)).background(Palette.Bg)
-                        .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+        // The screen is the app's background with one rounded window cut out, where the home screen wallpaper
+        // shows through behind the preview (the launcher's own widget screens look the same).
+        var hole by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+        val bg = Palette.Bg
+        val radius = with(androidx.compose.ui.platform.LocalDensity.current) { 28.dp.toPx() }
+        Box(
+            Modifier.fillMaxSize()
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawBehind {
+                    drawRect(bg)
+                    hole?.let { r -> drawRoundRect(Color.Black, r.topLeft, r.size, CornerRadius(radius), blendMode = BlendMode.Clear) }
+                },
+        ) {
+            Column(Modifier.fillMaxSize().statusBarsPadding()) {
+                Text(
+                    "Widget settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = Palette.Teal,
+                    modifier = Modifier.padding(start = 24.dp, top = 28.dp, bottom = 24.dp),
+                )
+                Box(
+                    Modifier.padding(horizontal = 12.dp).fillMaxWidth().height(260.dp).onGloballyPositioned { hole = it.boundsInRoot() },
+                    contentAlignment = Alignment.Center,
                 ) {
+                    WidgetPreview(cfg, stats ?: SampleStats, wide, WidgetTheme(dark))
+                }
+                Spacer(Modifier.height(20.dp))
+                Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
                     if (!signedIn) {
-                        Spacer(Modifier.height(16.dp))
-                        Text("Sign in to DNS OTG first, then come back to set up this widget.", color = Palette.Muted)
-                        Spacer(Modifier.height(16.dp))
+                        Text("Sign in to DNS OTG first, then come back to set up this widget.", color = Palette.Muted, modifier = Modifier.padding(12.dp))
                         CdButton("Open DNS OTG", { startActivity(Intent(this@WidgetConfigActivity, MainActivity::class.java)); finish() }, Modifier.fillMaxWidth())
                         return@Column
                     }
-                    SectionHeader("Show")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        WidgetMetrics.forEach { (key, label) ->
-                            CdChip(selected = cfg.metric == key, onClick = { cfg = cfg.copy(metric = key) }, label = { Text(label) })
-                        }
-                    }
-                    SectionHeader("Time range")
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        WidgetRanges.forEach { (key, _) ->
-                            CdChip(selected = cfg.range == key, onClick = { cfg = cfg.copy(range = key) }, label = { Text(rangeName(key)) })
-                        }
-                    }
-                    SectionHeader("Traffic from")
+                    // What and when: each row names the setting, with its value in green beneath, as the launcher's lists.
                     GroupRow(
-                        "Profile", first = true, last = false, subtitle = cfg.profileName ?: "All profiles", fill = Palette.Card,
-                        icon = { Icon(Solar.Tuning, null, tint = Palette.Teal) },
-                        trailing = { Icon(Solar.ChevronRight, null, tint = Palette.Muted) },
-                    ) { pick = "profile" }
+                        "Show", first = true, last = false, subtitle = WidgetMetrics.first { it.first == cfg.metric }.second,
+                        subtitleColor = Palette.Teal, fill = Palette.Card,
+                    ) { pick = "metric" }
+                    GroupRow("Time range", first = false, last = false, subtitle = rangeName(cfg.range), subtitleColor = Palette.Teal, fill = Palette.Card) { pick = "range" }
+                    GroupRow("Profile", first = false, last = false, subtitle = cfg.profileName ?: "All profiles", subtitleColor = Palette.Teal, fill = Palette.Card) { pick = "profile" }
+                    GroupRow("Endpoint", first = false, last = true, subtitle = cfg.endpointName ?: "All endpoints", subtitleColor = Palette.Teal, fill = Palette.Card) { pick = "endpoint" }
+                    Spacer(Modifier.height(16.dp))
+                    // How it looks.
                     GroupRow(
-                        "Endpoint", first = false, last = true, subtitle = cfg.endpointName ?: "All endpoints", fill = Palette.Card,
-                        icon = { Icon(Solar.Devices, null, tint = Palette.Teal) },
-                        trailing = { Icon(Solar.ChevronRight, null, tint = Palette.Muted) },
-                    ) { pick = "endpoint" }
-                    SectionHeader("Look")
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Palette.Card).padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        "Background", first = true, last = false, fill = Palette.Card,
+                        trailing = { CdSwitch(cfg.background, { cfg = cfg.copy(background = it) }) },
+                    ) { cfg = cfg.copy(background = !cfg.background) }
+                    Column(Modifier.fillMaxWidth().background(Palette.Card).padding(horizontal = 16.dp, vertical = 10.dp)) {
+                        Text("Opacity", color = if (cfg.background) Palette.Text else Palette.Muted)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Background opacity", color = Palette.Text, modifier = Modifier.weight(1f))
-                            Text("${cfg.opacity}%", color = Palette.Muted)
-                        }
-                        Slider(
-                            value = cfg.opacity.toFloat(), onValueChange = { cfg = cfg.copy(opacity = (it / 5).toInt() * 5) }, valueRange = 0f..100f,
-                            colors = SliderDefaults.colors(thumbColor = Palette.Teal, activeTrackColor = Palette.Teal, inactiveTrackColor = Palette.Outline),
-                        )
-                        Text("Colours", color = Palette.Text)
-                        Spacer(Modifier.height(8.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf("app" to "Match app", "light" to "Light", "dark" to "Dark").forEach { (key, label) ->
-                                CdChip(selected = cfg.colours == key, onClick = { cfg = cfg.copy(colours = key) }, label = { Text(label) })
-                            }
+                            Checkerboard(Modifier.size(26.dp))
+                            Spacer(Modifier.width(14.dp))
+                            Slider(
+                                value = cfg.opacity.toFloat(), onValueChange = { cfg = cfg.copy(opacity = (it / 5).toInt() * 5) }, valueRange = 0f..100f,
+                                enabled = cfg.background, modifier = Modifier.weight(1f),
+                                colors = SliderDefaults.colors(thumbColor = Palette.Teal, activeTrackColor = Palette.Teal, inactiveTrackColor = Palette.Outline),
+                            )
                         }
                     }
+                    GroupRow(
+                        "Colours", first = false, last = true, subtitle = colourNames.first { it.first == cfg.colours }.second,
+                        subtitleColor = Palette.Teal, fill = Palette.Card,
+                    ) { pick = "colours" }
                     // Room for the floating Cancel / Save bar.
                     Spacer(Modifier.height(110.dp))
                 }
@@ -193,14 +198,23 @@ class WidgetConfigActivity : ComponentActivity() {
                     .clip(RoundedCornerShape(50)).background(Palette.CardHigh).padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = { finish() }) { Text("Cancel", color = Palette.Text, fontSize = 17.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) }
+                TextButton(onClick = { finish() }) { Text("Cancel", color = Palette.Text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) }
                 Box(Modifier.width(1.dp).height(22.dp).background(Palette.Outline))
                 TextButton(onClick = { onSave(cfg) }, enabled = signedIn) {
-                    Text("Save", color = Palette.Teal, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
+                    Text("Save", color = Palette.Text, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
                 }
             }
         }
         when (pick) {
+            "metric" -> PickerDialog("Show", WidgetMetrics, label = { it.second }, selected = { it.first == cfg.metric }, onDismiss = { pick = null }) {
+                cfg = cfg.copy(metric = it.first)
+            }
+            "range" -> PickerDialog("Time range", WidgetRanges.map { it.first }, label = { rangeName(it) }, selected = { it == cfg.range }, onDismiss = { pick = null }) {
+                cfg = cfg.copy(range = it)
+            }
+            "colours" -> PickerDialog("Colours", colourNames, label = { it.second }, selected = { it.first == cfg.colours }, onDismiss = { pick = null }) {
+                cfg = cfg.copy(colours = it.first)
+            }
             "profile" -> PickerDialog(
                 "Profile", listOf<Pair<String, String>?>(null) + profiles.orEmpty(), label = { it?.second ?: "All profiles" },
                 selected = { it?.first == cfg.profileId }, onDismiss = { pick = null },
@@ -209,6 +223,22 @@ class WidgetConfigActivity : ComponentActivity() {
                 "Endpoint", listOf<Pair<String, String>?>(null) + endpoints.orEmpty(), label = { it?.second ?: "All endpoints" },
                 selected = { it?.first == cfg.endpointId }, onDismiss = { pick = null },
             ) { cfg = cfg.copy(endpointId = it?.first, endpointName = it?.second) }
+        }
+    }
+}
+
+private val colourNames = listOf("app" to "Match app setting", "light" to "Light", "dark" to "Dark")
+
+/** The see-through sign next to the opacity slider. */
+@Composable
+private fun Checkerboard(modifier: Modifier) {
+    val light = Palette.Muted
+    val dark = Palette.Outline
+    Canvas(modifier.clip(androidx.compose.foundation.shape.CircleShape)) {
+        val n = 4
+        val cell = size.width / n
+        for (i in 0 until n) for (j in 0 until n) {
+            drawRect(if ((i + j) % 2 == 0) light else dark, Offset(i * cell, j * cell), androidx.compose.ui.geometry.Size(cell, cell))
         }
     }
 }
@@ -231,7 +261,7 @@ private fun WidgetPreview(cfg: WidgetConfig, s: WidgetStats, wide: Boolean, t: W
     val shape = RoundedCornerShape(22.dp)
     Box(
         (if (wide) Modifier.fillMaxWidth().widthIn(max = 380.dp).height(170.dp) else Modifier.size(170.dp))
-            .clip(shape).background(t.bg.copy(alpha = cfg.opacity / 100f)).padding(12.dp),
+            .clip(shape).background(t.bg.copy(alpha = if (cfg.background) cfg.opacity / 100f else 0f)).padding(12.dp),
     ) {
         Row(Modifier.fillMaxSize()) {
             Column(if (wide) Modifier.width(118.dp).fillMaxHeight() else Modifier.fillMaxSize()) {
