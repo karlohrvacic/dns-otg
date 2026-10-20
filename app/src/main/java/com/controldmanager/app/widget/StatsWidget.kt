@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.glance.ColorFilter
@@ -87,6 +88,10 @@ internal data class WidgetConfig(
     val profileName: String? = null,
     val endpointId: String? = null,
     val endpointName: String? = null,
+    /** "app" follows the app's Appearance setting; "light" or "dark" fixes it. */
+    val colours: String = "app",
+    /** Background opacity, 0 (none) to 100. */
+    val opacity: Int = 100,
 ) {
     val rangeSeconds: Long get() = WidgetRanges.firstOrNull { it.first == range }?.second ?: 86_400
 }
@@ -107,6 +112,8 @@ internal object WidgetKeys {
     val profileName = stringPreferencesKey("profile_name")
     val endpointId = stringPreferencesKey("endpoint_id")
     val endpointName = stringPreferencesKey("endpoint_name")
+    val colours = stringPreferencesKey("colours")
+    val opacity = intPreferencesKey("opacity")
     /** Bumped on every settings change, so the widget loads again for the new settings. */
     val configVersion = longPreferencesKey("config_version")
     val data = stringPreferencesKey("data")
@@ -122,6 +129,8 @@ internal fun Preferences.widgetConfig() = WidgetConfig(
     profileName = this[WidgetKeys.profileName]?.ifBlank { null },
     endpointId = this[WidgetKeys.endpointId]?.ifBlank { null },
     endpointName = this[WidgetKeys.endpointName]?.ifBlank { null },
+    colours = this[WidgetKeys.colours] ?: "app",
+    opacity = this[WidgetKeys.opacity] ?: 100,
 )
 
 private fun WidgetStats.toJson() = JSONObject()
@@ -129,7 +138,7 @@ private fun WidgetStats.toJson() = JSONObject()
     .put("sb", JSONArray(seriesBlocked)).put("sp", JSONArray(seriesBypassed)).put("sr", JSONArray(seriesRedirected))
     .toString()
 
-private fun parseStats(s: String?): WidgetStats? = s?.let {
+internal fun parseStats(s: String?): WidgetStats? = s?.let {
     runCatching {
         val o = JSONObject(it)
         fun list(k: String) = o.optJSONArray(k)?.let { a -> (0 until a.length()).map { i -> a.optLong(i) } }.orEmpty()
@@ -146,7 +155,7 @@ private class NotSignedIn : Exception("Sign in to DNS OTG to see your stats")
 private fun regionPrefs(ctx: Context) = ctx.getSharedPreferences("dnsotg_widget", Context.MODE_PRIVATE)
 
 /** The same query-over-time call as Statistics' chart: one request gives the totals and the chart. */
-private suspend fun loadStats(ctx: Context, cfg: WidgetConfig): WidgetStats {
+internal suspend fun loadStats(ctx: Context, cfg: WidgetConfig): WidgetStats {
     val (token, org) = TokenStore.load(ctx) ?: throw NotSignedIn()
     val api = ControlDApi(token, org)
     val region = regionPrefs(ctx).getString("region", null)
@@ -219,7 +228,6 @@ class StatsWidget : GlanceAppWidget() {
     override val stateDefinition: GlanceStateDefinition<*> = PreferencesGlanceStateDefinition
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val theme = context.getSharedPreferences("controldmanager_ui", Context.MODE_PRIVATE).getString("theme", "system") ?: "system"
         provideContent {
             val prefs = currentState<Preferences>()
             val stats = remember(prefs[WidgetKeys.data]) { parseStats(prefs[WidgetKeys.data]) }
@@ -228,31 +236,64 @@ class StatsWidget : GlanceAppWidget() {
                 val age = System.currentTimeMillis() - (prefs[WidgetKeys.updated] ?: 0L)
                 if (stats == null && prefs[WidgetKeys.error] == null || age > STALE_MS) refreshWidget(context, id)
             }
-            WidgetContent(context, prefs.widgetConfig(), stats, prefs[WidgetKeys.error], prefs[WidgetKeys.refreshing] == true, WidgetColors(theme))
+            val cfg = prefs.widgetConfig()
+            WidgetContent(context, cfg, stats, prefs[WidgetKeys.error], prefs[WidgetKeys.refreshing] == true, WidgetColors(widgetDark(context, cfg.colours), cfg.opacity))
         }
     }
 }
 
-/** The app's palette, following its Appearance setting (System follows the phone's dark mode). */
-private class WidgetColors(private val theme: String) {
-    private fun pick(dark: Long, light: Long): ColorProvider = when (theme) {
-        "light" -> ColorProvider(Color(light))
-        "dark" -> ColorProvider(Color(dark))
-        else -> DayNight(day = Color(light), night = Color(dark))
-    }
-    val bg = pick(0xFF111628, 0xFFFFFFFF)
-    val pill = pick(0xFF1A2038, 0xFFF2F3F8)
-    val text = pick(0xFFE8EBF7, 0xFF0E1018)
-    val muted = pick(0xFF8B93B3, 0xFF656A7A)
-    val teal = pick(0xFF2FD8A2, 0xFF18C13E)
-    val red = ColorProvider(BlockedColor)
-    val green = pick(0xFF1BE3AD, 0xFF0FA678)
-    val orange = pick(0xFFE69201, 0xFFD08400)
+/** The widget's colours in one theme: the app's own palette. Shared with the preview in the settings screen. */
+internal class WidgetTheme(dark: Boolean) {
+    val bg = if (dark) Color(0xFF111628) else Color(0xFFFFFFFF)
+    val pill = if (dark) Color(0xFF1A2038) else Color(0xFFF2F3F8)
+    val text = if (dark) Color(0xFFE8EBF7) else Color(0xFF0E1018)
+    val muted = if (dark) Color(0xFF8B93B3) else Color(0xFF656A7A)
+    val teal = if (dark) Color(0xFF2FD8A2) else Color(0xFF18C13E)
+    val green = if (dark) Color(0xFF1BE3AD) else Color(0xFF0FA678)
+    val orange = if (dark) Color(0xFFE69201) else Color(0xFFD08400)
+    val red = BlockedColor
 }
 
-private val BlockedColor = Color(0xFFE93349)
-private val BypassedColor = Color(0xFF1BC99A)
-private val RedirectedColor = Color(0xFFE69201)
+/** True or false for a fixed theme; null follows the phone (the app's System setting). */
+internal fun widgetDark(ctx: Context, colours: String): Boolean? {
+    val mode = if (colours == "app") ctx.getSharedPreferences("controldmanager_ui", Context.MODE_PRIVATE).getString("theme", "system") else colours
+    return when (mode) { "light" -> false; "dark" -> true; else -> null }
+}
+
+private class WidgetColors(dark: Boolean?, opacity: Int) {
+    private val d = WidgetTheme(true)
+    private val l = WidgetTheme(false)
+    private fun pick(f: (WidgetTheme) -> Color): ColorProvider = when (dark) {
+        true -> ColorProvider(f(d))
+        false -> ColorProvider(f(l))
+        null -> DayNight(day = f(l), night = f(d))
+    }
+    val bg = pick { it.bg.copy(alpha = opacity.coerceIn(0, 100) / 100f) }
+    val pill = pick { it.pill }
+    val text = pick { it.text }
+    val muted = pick { it.muted }
+    val teal = pick { it.teal }
+    val red = ColorProvider(BlockedColor)
+    val green = pick { it.green }
+    val orange = pick { it.orange }
+}
+
+internal val BlockedColor = Color(0xFFE93349)
+internal val BypassedColor = Color(0xFF1BC99A)
+internal val RedirectedColor = Color(0xFFE69201)
+
+/** The big number: the chosen action's share of all queries, or the total itself; and the word under it. */
+internal fun headline(cfg: WidgetConfig, s: WidgetStats): Pair<String, String> = when (cfg.metric) {
+    "total" -> compact(s.total) to "Queries"
+    else -> share(metricCount(cfg, s), s.total) to (WidgetMetrics.firstOrNull { it.first == cfg.metric }?.second ?: "Blocked")
+}
+
+internal fun metricCount(cfg: WidgetConfig, s: WidgetStats) = when (cfg.metric) {
+    "bypassed" -> s.bypassed
+    "redirected" -> s.redirected
+    "total" -> s.total
+    else -> s.blocked
+}
 
 @Composable
 private fun WidgetContent(context: Context, cfg: WidgetConfig, stats: WidgetStats?, error: String?, refreshing: Boolean, c: WidgetColors) {
@@ -333,28 +374,19 @@ private fun RefreshButton(c: WidgetColors) {
     }
 }
 
-/** The big number: the chosen action's share of all queries, or the total itself. */
 @Composable
 private fun Headline(cfg: WidgetConfig, s: WidgetStats, c: WidgetColors) {
-    val (count, color) = when (cfg.metric) {
-        "bypassed" -> s.bypassed to c.green
-        "redirected" -> s.redirected to c.orange
-        "total" -> s.total to c.teal
-        else -> s.blocked to c.red
-    }
-    val label = WidgetMetrics.firstOrNull { it.first == cfg.metric }?.second ?: "Blocked"
-    Text(
-        if (cfg.metric == "total") compact(s.total) else share(count, s.total),
-        style = TextStyle(color = c.text, fontSize = 34.sp, fontWeight = FontWeight.Bold), maxLines = 1,
-    )
-    Text(if (cfg.metric == "total") "Queries" else label, style = TextStyle(color = c.muted, fontSize = 12.sp))
+    val (big, label) = headline(cfg, s)
+    val color = when (cfg.metric) { "bypassed" -> c.green; "redirected" -> c.orange; "total" -> c.teal; else -> c.red }
+    Text(big, style = TextStyle(color = c.text, fontSize = 34.sp, fontWeight = FontWeight.Bold), maxLines = 1)
+    Text(label, style = TextStyle(color = c.muted, fontSize = 12.sp))
     Spacer(GlanceModifier.height(6.dp))
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (cfg.metric == "total") {
             Text(compact(s.blocked), style = TextStyle(color = c.red, fontSize = 12.sp, fontWeight = FontWeight.Medium))
             Text(" blocked", style = TextStyle(color = c.muted, fontSize = 11.sp))
         } else {
-            Text(compact(count), style = TextStyle(color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium))
+            Text(compact(metricCount(cfg, s)), style = TextStyle(color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium))
             Spacer(GlanceModifier.width(8.dp))
             Text(compact(s.total), style = TextStyle(color = c.text, fontSize = 12.sp, fontWeight = FontWeight.Medium))
             Text(" total", style = TextStyle(color = c.muted, fontSize = 11.sp))

@@ -4,6 +4,11 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
+    <!-- Widget settings: the home screen wallpaper shows behind the preview, as the launcher's own widget screens. -->
+    <style name="Theme.CDManager.WidgetConfig">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowShowWallpaper">true</item>
+    </style>
     <color name="bg">#080B17</color>
     <color name="icon_bg">#0B1022</color>
     <color name="teal">#2FD8A2</color>
