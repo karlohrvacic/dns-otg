@@ -50,8 +50,8 @@ jobs:
           set -o pipefail
           # On failure, the compiler errors and failed tests also go up as annotations, readable without the full log.
           if ! ./gradlew testReleaseUnitTest assembleRelease 2>&1 | tee build.log; then
-            grep -E "^e: |FAILED|Error|expected:|Exception" build.log | head -40 | sed 's/^/::error::/'
-            for f in app/build/test-results/*/*.xml; do grep -h -A3 "<failure" "$f" | head -20 | sed 's/^/::error::/'; done 2>/dev/null
+            { grep -E "^e: |FAILED|expected:" build.log; grep -A8 "What went wrong" build.log; } | head -40 | sed 's/^/::error::/' || true
+            grep -h -A3 "<failure" app/build/test-results/*/*.xml 2>/dev/null | head -20 | sed 's/^/::error::/' || true
             exit 1
           fi
 
