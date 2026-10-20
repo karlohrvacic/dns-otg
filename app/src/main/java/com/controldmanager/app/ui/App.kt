@@ -56,6 +56,7 @@ fun CdApp() {
                 LoginScreen(onLoggedIn = { token, org ->
                     TokenStore.save(ctx, token, org)
                     session = Session(ControlDApi(token, org), org)
+                    com.controldmanager.app.widget.refreshAllWidgets(ctx)
                 })
             } else {
                 CompositionLocalProvider(LocalSession provides s) {
@@ -63,6 +64,7 @@ fun CdApp() {
                         MainScaffold(onLogout = {
                             TokenStore.clear(ctx)
                             session = null
+                            com.controldmanager.app.widget.refreshAllWidgets(ctx)
                         })
                     }
                 }
@@ -475,6 +477,23 @@ private fun AccountScreen(nav: NavHostController, onLogout: () -> Unit) {
                 when (ThemePref.mode) { "light" -> 1; "dark" -> 2; else -> 0 },
                 { ThemePref.set(ctx, listOf("system", "light", "dark")[it]) },
             )
+
+            // One tap asks the launcher to place a widget; launchers that can't get the long-press way instead.
+            SectionHeader("Widgets")
+            fun addWidget(wide: Boolean) {
+                if (!com.controldmanager.app.widget.pinWidget(ctx, wide))
+                    showToast(ctx, "Long-press your home screen, tap Widgets and find DNS OTG")
+            }
+            GroupRow(
+                "Add stats widget", first = true, last = false, subtitle = "Small: blocked share and counts", fill = Palette.Card,
+                icon = { Icon(Solar.Widget, null, tint = Palette.Teal) },
+                trailing = { Icon(Solar.Add, null, tint = Palette.Muted) },
+            ) { addWidget(false) }
+            GroupRow(
+                "Add activity widget", first = false, last = true, subtitle = "Wide: the same with an activity chart", fill = Palette.Card,
+                icon = { Icon(Solar.ShowChart, null, tint = Palette.Teal) },
+                trailing = { Icon(Solar.Add, null, tint = Palette.Muted) },
+            ) { addWidget(true) }
 
             // Same as controld.com/config: what this device looks like to Control D.
             StatusSection()

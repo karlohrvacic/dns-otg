@@ -1,0 +1,393 @@
+package com.controldmanager.app.widget
+
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.glance.ColorFilter
+import androidx.glance.GlanceId
+import androidx.glance.GlanceModifier
+import androidx.glance.Image
+import androidx.glance.ImageProvider
+import androidx.glance.LocalSize
+import androidx.glance.action.ActionParameters
+import androidx.glance.action.clickable
+import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetManager
+import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.SizeMode
+import androidx.glance.appwidget.action.ActionCallback
+import androidx.glance.appwidget.action.actionRunCallback
+import androidx.glance.appwidget.action.actionStartActivity
+import androidx.glance.appwidget.cornerRadius
+import androidx.glance.appwidget.provideContent
+import androidx.glance.appwidget.state.getAppWidgetState
+import androidx.glance.appwidget.state.updateAppWidgetState
+import androidx.glance.appwidget.updateAll
+import androidx.glance.background
+import androidx.glance.currentState
+import androidx.glance.layout.Alignment
+import androidx.glance.layout.Box
+import androidx.glance.layout.Column
+import androidx.glance.layout.ContentScale
+import androidx.glance.layout.Row
+import androidx.glance.layout.Spacer
+import androidx.glance.layout.fillMaxHeight
+import androidx.glance.layout.fillMaxSize
+import androidx.glance.layout.fillMaxWidth
+import androidx.glance.layout.height
+import androidx.glance.layout.padding
+import androidx.glance.layout.size
+import androidx.glance.layout.width
+import androidx.glance.state.GlanceStateDefinition
+import androidx.glance.state.PreferencesGlanceStateDefinition
+import androidx.glance.text.FontWeight
+import androidx.glance.text.Text
+import androidx.glance.text.TextStyle
+import androidx.glance.unit.ColorProvider
+import com.controldmanager.app.MainActivity
+import com.controldmanager.app.R
+import com.controldmanager.app.api.ControlDApi
+import com.controldmanager.app.api.Do
+import com.controldmanager.app.api.StatScope
+import com.controldmanager.app.api.TimeRange
+import com.controldmanager.app.api.TokenStore
+import com.controldmanager.app.ui.compact
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
+import kotlin.math.roundToInt
+import androidx.glance.color.ColorProvider as DayNight
+
+/** What a widget shows, chosen in [WidgetConfigActivity]; kept in the widget's own state. */
+internal data class WidgetConfig(
+    val metric: String = "blocked",
+    val range: String = "24h",
+    val profileId: String? = null,
+    val profileName: String? = null,
+    val endpointId: String? = null,
+    val endpointName: String? = null,
+) {
+    val rangeSeconds: Long get() = WidgetRanges.firstOrNull { it.first == range }?.second ?: 86_400
+}
+
+internal val WidgetMetrics = listOf("blocked" to "Blocked", "bypassed" to "Bypassed", "redirected" to "Redirected", "total" to "Total")
+internal val WidgetRanges = listOf("1h" to 3600L, "24h" to 86_400L, "7d" to 7 * 86_400L, "30d" to 30 * 86_400L, "1y" to 365 * 86_400L)
+
+/** Totals for the period, and per time bucket for the chart. */
+internal data class WidgetStats(
+    val blocked: Long, val bypassed: Long, val redirected: Long, val total: Long,
+    val seriesBlocked: List<Long>, val seriesBypassed: List<Long>, val seriesRedirected: List<Long>,
+)
+
+internal object WidgetKeys {
+    val metric = stringPreferencesKey("metric")
+    val range = stringPreferencesKey("range")
+    val profileId = stringPreferencesKey("profile_id")
+    val profileName = stringPreferencesKey("profile_name")
+    val endpointId = stringPreferencesKey("endpoint_id")
+    val endpointName = stringPreferencesKey("endpoint_name")
+    /** Bumped on every settings change, so the widget loads again for the new settings. */
+    val configVersion = longPreferencesKey("config_version")
+    val data = stringPreferencesKey("data")
+    val updated = longPreferencesKey("updated")
+    val error = stringPreferencesKey("error")
+    val refreshing = booleanPreferencesKey("refreshing")
+}
+
+internal fun Preferences.widgetConfig() = WidgetConfig(
+    metric = this[WidgetKeys.metric] ?: "blocked",
+    range = this[WidgetKeys.range] ?: "24h",
+    profileId = this[WidgetKeys.profileId]?.ifBlank { null },
+    profileName = this[WidgetKeys.profileName]?.ifBlank { null },
+    endpointId = this[WidgetKeys.endpointId]?.ifBlank { null },
+    endpointName = this[WidgetKeys.endpointName]?.ifBlank { null },
+)
+
+private fun WidgetStats.toJson() = JSONObject()
+    .put("b", blocked).put("p", bypassed).put("r", redirected).put("t", total)
+    .put("sb", JSONArray(seriesBlocked)).put("sp", JSONArray(seriesBypassed)).put("sr", JSONArray(seriesRedirected))
+    .toString()
+
+private fun parseStats(s: String?): WidgetStats? = s?.let {
+    runCatching {
+        val o = JSONObject(it)
+        fun list(k: String) = o.optJSONArray(k)?.let { a -> (0 until a.length()).map { i -> a.optLong(i) } }.orEmpty()
+        WidgetStats(o.optLong("b"), o.optLong("p"), o.optLong("r"), o.optLong("t"), list("sb"), list("sp"), list("sr"))
+    }.getOrNull()
+}
+
+/** Older than this, a shown widget loads again (Android wakes widgets about every 30 minutes). */
+private const val STALE_MS = 25 * 60_000L
+
+private class NotSignedIn : Exception("Sign in to DNS OTG to see your stats")
+
+/** The analytics region, kept so a widget update is a single request. Cleared on sign-out. */
+private fun regionPrefs(ctx: Context) = ctx.getSharedPreferences("dnsotg_widget", Context.MODE_PRIVATE)
+
+/** The same query-over-time call as Statistics' chart: one request gives the totals and the chart. */
+private suspend fun loadStats(ctx: Context, cfg: WidgetConfig): WidgetStats {
+    val (token, org) = TokenStore.load(ctx) ?: throw NotSignedIn()
+    val api = ControlDApi(token, org)
+    val region = regionPrefs(ctx).getString("region", null)
+        ?: (api.user().statsRegion ?: "america").also { regionPrefs(ctx).edit().putString("region", it).apply() }
+    val series = api.statSeries(region, TimeRange(cfg.range, cfg.rangeSeconds), StatScope(cfg.endpointId, cfg.profileId), buckets = 30)
+    fun at(p: com.controldmanager.app.api.SeriesPoint, vararg actions: Int) = actions.sumOf { p.counts[it] ?: 0L }
+    val blocked = series.map { at(it, Do.BLOCK) }
+    val bypassed = series.map { at(it, Do.BYPASS) }
+    val redirected = series.map { at(it, Do.SPOOF, Do.REDIRECT) }
+    return WidgetStats(blocked.sum(), bypassed.sum(), redirected.sum(), series.sumOf { p -> p.counts.values.sum() }, blocked, bypassed, redirected)
+}
+
+/** Loads the widget's numbers and redraws it; failures keep the last numbers and say why. */
+internal suspend fun refreshWidget(ctx: Context, id: GlanceId) {
+    val prefs = getAppWidgetState(ctx, PreferencesGlanceStateDefinition, id)
+    updateAppWidgetState(ctx, id) { it[WidgetKeys.refreshing] = true }
+    StatsWidget().update(ctx, id)
+    val result = runCatching { loadStats(ctx, prefs.widgetConfig()) }
+    updateAppWidgetState(ctx, id) { p ->
+        p[WidgetKeys.refreshing] = false
+        p[WidgetKeys.updated] = System.currentTimeMillis()
+        result.onSuccess { p[WidgetKeys.data] = it.toJson(); p.remove(WidgetKeys.error) }
+        result.onFailure { p[WidgetKeys.error] = if (it is NotSignedIn) it.message.orEmpty() else "Couldn't update" }
+        if (result.exceptionOrNull() is NotSignedIn) p.remove(WidgetKeys.data)
+    }
+    StatsWidget().update(ctx, id)
+}
+
+private val widgetScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+/** After signing in or out: every widget loads again (and forgets the old account's region). */
+fun refreshAllWidgets(ctx: Context) {
+    val app = ctx.applicationContext
+    regionPrefs(app).edit().clear().apply()
+    widgetScope.launch {
+        runCatching {
+            GlanceAppWidgetManager(app).getGlanceIds(StatsWidget::class.java).forEach { refreshWidget(app, it) }
+            StatsWidget().updateAll(app)
+        }
+    }
+}
+
+/** Asks the launcher to place a widget (one tap); false when it can't, so the caller can explain the long-press way. */
+fun pinWidget(ctx: Context, wide: Boolean): Boolean {
+    val m = AppWidgetManager.getInstance(ctx)
+    if (!m.isRequestPinAppWidgetSupported) return false
+    val receiver = if (wide) StatsWidgetWideReceiver::class.java else StatsWidgetSmallReceiver::class.java
+    return runCatching { m.requestPinAppWidget(ComponentName(ctx, receiver), null, null) }.getOrDefault(false)
+}
+
+class RefreshWidgetAction : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) = refreshWidget(context, glanceId)
+}
+
+/** The 2×2 (blocked %) widget; the same widget grows into the chart layout when made wide enough. */
+class StatsWidgetSmallReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = StatsWidget()
+}
+
+/** The 4×2 widget with the activity chart. */
+class StatsWidgetWideReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = StatsWidget()
+}
+
+private val Small = DpSize(110.dp, 110.dp)
+private val Wide = DpSize(250.dp, 110.dp)
+
+class StatsWidget : GlanceAppWidget() {
+    override val sizeMode = SizeMode.Responsive(setOf(Small, Wide))
+    override val stateDefinition: GlanceStateDefinition<*> = PreferencesGlanceStateDefinition
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val theme = context.getSharedPreferences("controldmanager_ui", Context.MODE_PRIVATE).getString("theme", "system") ?: "system"
+        provideContent {
+            val prefs = currentState<Preferences>()
+            val stats = remember(prefs[WidgetKeys.data]) { parseStats(prefs[WidgetKeys.data]) }
+            // Loads when first shown, after a settings change, and when Android wakes a widget whose numbers are old.
+            LaunchedEffect(prefs[WidgetKeys.configVersion], stats == null) {
+                val age = System.currentTimeMillis() - (prefs[WidgetKeys.updated] ?: 0L)
+                if (stats == null && prefs[WidgetKeys.error] == null || age > STALE_MS) refreshWidget(context, id)
+            }
+            WidgetContent(prefs.widgetConfig(), stats, prefs[WidgetKeys.error], prefs[WidgetKeys.refreshing] == true, prefs[WidgetKeys.updated], WidgetColors(theme))
+        }
+    }
+}
+
+/** The app's palette, following its Appearance setting (System follows the phone's dark mode). */
+private class WidgetColors(theme: String) {
+    private fun pick(dark: Long, light: Long): ColorProvider = when (theme) {
+        "light" -> ColorProvider(Color(light))
+        "dark" -> ColorProvider(Color(dark))
+        else -> DayNight(day = Color(light), night = Color(dark))
+    }
+    val bg = pick(0xFF111628, 0xFFFFFFFF)
+    val pill = pick(0xFF1A2038, 0xFFF2F3F8)
+    val text = pick(0xFFE8EBF7, 0xFF0E1018)
+    val muted = pick(0xFF8B93B3, 0xFF656A7A)
+    val teal = pick(0xFF2FD8A2, 0xFF18C13E)
+    val red = ColorProvider(BlockedColor)
+    val green = pick(0xFF1BE3AD, 0xFF0FA678)
+    val orange = pick(0xFFE69201, 0xFFD08400)
+}
+
+private val BlockedColor = Color(0xFFE93349)
+private val BypassedColor = Color(0xFF1BC99A)
+private val RedirectedColor = Color(0xFFE69201)
+
+@Composable
+private fun WidgetContent(cfg: WidgetConfig, stats: WidgetStats?, error: String?, refreshing: Boolean, updated: Long?, c: WidgetColors) {
+    val wide = LocalSize.current.width >= Wide.width
+    Box(
+        GlanceModifier.fillMaxSize().cornerRadius(22.dp).background(c.bg).clickable(actionStartActivity<MainActivity>()).padding(12.dp),
+    ) {
+        Row(GlanceModifier.fillMaxSize()) {
+            Column(if (wide) GlanceModifier.width(118.dp).fillMaxHeight() else GlanceModifier.fillMaxSize()) {
+                Header(cfg, refreshing, showRefresh = !wide, c)
+                Spacer(GlanceModifier.defaultWeight())
+                when {
+                    stats != null -> Headline(cfg, stats, c)
+                    error != null -> Text(error, style = TextStyle(color = c.muted, fontSize = 12.sp), maxLines = 3)
+                    else -> Text("Loading…", style = TextStyle(color = c.muted, fontSize = 12.sp))
+                }
+            }
+            if (wide) {
+                Spacer(GlanceModifier.width(12.dp))
+                Column(GlanceModifier.defaultWeight().fillMaxHeight()) {
+                    Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (refreshing) "Updating…" else if (error != null && stats != null) "Couldn't update" else "Activity",
+                            style = TextStyle(color = c.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium),
+                            modifier = GlanceModifier.defaultWeight(),
+                        )
+                        RefreshButton(c)
+                    }
+                    if (stats != null) {
+                        Chart(stats, GlanceModifier.fillMaxWidth().defaultWeight().padding(vertical = 4.dp))
+                        Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Legend("●", compact(stats.blocked), "Block", c.red, c)
+                            Spacer(GlanceModifier.width(8.dp))
+                            Legend("●", compact(stats.bypassed), "Allow", c.green, c)
+                            Spacer(GlanceModifier.width(8.dp))
+                            Legend("●", compact(stats.redirected), "Redirect", c.orange, c)
+                        }
+                    } else Spacer(GlanceModifier.defaultWeight())
+                }
+            }
+        }
+    }
+}
+
+/** App icon and name, the time range (and what it's limited to), and on the small widget the refresh button. */
+@Composable
+private fun Header(cfg: WidgetConfig, refreshing: Boolean, showRefresh: Boolean, c: WidgetColors) {
+    Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Image(ImageProvider(R.drawable.app_logo), null, GlanceModifier.size(16.dp))
+        Spacer(GlanceModifier.width(5.dp))
+        Text(
+            cfg.endpointName ?: cfg.profileName ?: "DNS OTG", maxLines = 1,
+            style = TextStyle(color = c.text, fontSize = 12.sp, fontWeight = FontWeight.Medium), modifier = GlanceModifier.defaultWeight(),
+        )
+        Box(GlanceModifier.cornerRadius(8.dp).background(c.pill).padding(horizontal = 6.dp, vertical = 1.dp)) {
+            Text(if (refreshing && showRefresh) "…" else cfg.range, style = TextStyle(color = c.muted, fontSize = 11.sp))
+        }
+        if (showRefresh) { Spacer(GlanceModifier.width(2.dp)); RefreshButton(c) }
+    }
+}
+
+@Composable
+private fun RefreshButton(c: WidgetColors) {
+    Box(GlanceModifier.size(26.dp).cornerRadius(13.dp).clickable(actionRunCallback<RefreshWidgetAction>()), contentAlignment = Alignment.Center) {
+        Image(ImageProvider(R.drawable.ic_widget_refresh), "Refresh", GlanceModifier.size(15.dp), colorFilter = ColorFilter.tint(c.muted))
+    }
+}
+
+/** The big number: the chosen action's share of all queries, or the total itself. */
+@Composable
+private fun Headline(cfg: WidgetConfig, s: WidgetStats, c: WidgetColors) {
+    val (count, color) = when (cfg.metric) {
+        "bypassed" -> s.bypassed to c.green
+        "redirected" -> s.redirected to c.orange
+        "total" -> s.total to c.teal
+        else -> s.blocked to c.red
+    }
+    val label = WidgetMetrics.firstOrNull { it.first == cfg.metric }?.second ?: "Blocked"
+    Text(
+        if (cfg.metric == "total") compact(s.total) else share(count, s.total),
+        style = TextStyle(color = c.text, fontSize = 34.sp, fontWeight = FontWeight.Bold), maxLines = 1,
+    )
+    Text(if (cfg.metric == "total") "Queries" else label, style = TextStyle(color = c.muted, fontSize = 12.sp))
+    Spacer(GlanceModifier.height(6.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (cfg.metric == "total") {
+            Text(compact(s.blocked), style = TextStyle(color = c.red, fontSize = 12.sp, fontWeight = FontWeight.Medium))
+            Text(" blocked", style = TextStyle(color = c.muted, fontSize = 11.sp))
+        } else {
+            Text(compact(count), style = TextStyle(color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium))
+            Spacer(GlanceModifier.width(8.dp))
+            Text(compact(s.total), style = TextStyle(color = c.text, fontSize = 12.sp, fontWeight = FontWeight.Medium))
+            Text(" total", style = TextStyle(color = c.muted, fontSize = 11.sp))
+        }
+    }
+}
+
+@Composable
+private fun Legend(dot: String, value: String, label: String, color: ColorProvider, c: WidgetColors) {
+    Text(dot, style = TextStyle(color = color, fontSize = 9.sp))
+    Text(" $value ", style = TextStyle(color = c.text, fontSize = 11.sp, fontWeight = FontWeight.Medium))
+    Text(label, style = TextStyle(color = c.muted, fontSize = 10.sp), maxLines = 1)
+}
+
+internal fun share(part: Long, whole: Long): String {
+    if (whole <= 0) return "0%"
+    val p = part * 100.0 / whole
+    return if (p > 0 && p < 1) "<1%" else "${p.roundToInt()}%"
+}
+
+/** Widgets can't draw, so the three lines are drawn into a picture (scaled to fit). */
+@Composable
+private fun Chart(s: WidgetStats, modifier: GlanceModifier) {
+    val bitmap = remember(s) { chartBitmap(s, 480, 200) }
+    Image(ImageProvider(bitmap), "Queries over time", modifier, contentScale = ContentScale.FillBounds)
+}
+
+private fun chartBitmap(s: WidgetStats, w: Int, h: Int): Bitmap {
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+    val top = maxOf(1L, (s.seriesBlocked + s.seriesBypassed + s.seriesRedirected).maxOrNull() ?: 1L).toFloat()
+    val pad = 6f
+    fun line(values: List<Long>, color: Color) {
+        if (values.size < 2) return
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color.toArgb(); style = Paint.Style.STROKE; strokeWidth = 5f; strokeJoin = Paint.Join.ROUND; strokeCap = Paint.Cap.ROUND
+        }
+        val path = Path()
+        values.forEachIndexed { i, v ->
+            val x = pad + i * (w - 2 * pad) / (values.size - 1)
+            val y = h - pad - v / top * (h - 2 * pad)
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        canvas.drawPath(path, paint)
+    }
+    line(s.seriesRedirected, RedirectedColor)
+    line(s.seriesBlocked, BlockedColor)
+    line(s.seriesBypassed, BypassedColor)
+    return bmp
+}

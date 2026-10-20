@@ -20,7 +20,7 @@ android {
         applicationId = "app.dnsotg"
         minSdk = 26
         targetSdk = 36
-        versionCode = 24
+        versionCode = 25
         versionName = "1.0.3"
     }
 
@@ -80,6 +80,9 @@ dependencies {
     implementation("androidx.webkit:webkit:1.14.0")
     // Dashboard opened in a Chrome tab inside the app (shares the Chrome sign-in).
     implementation("androidx.browser:browser:1.8.0")
+    // Home screen widgets.
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     testImplementation("junit:junit:4.13.2")
     // Android's org.json is stubbed in local unit tests; this is the real implementation.

@@ -41,6 +41,8 @@
 
 **Domain Test.** Check how any endpoint answers a domain (blocked, bypassed or redirected, and by which filter, service or rule).
 
+**Widgets.** Your blocked share, counts and an activity chart on the home screen, for any period, profile or endpoint.
+
 **Account.** Billing and receipts, account settings, Control D's changelog, and the same check as controld.com/config.
 
 <table>
