@@ -397,7 +397,7 @@ data class StatScope(
 data class CategoryGroup(val id: String, val name: String, val categoryIds: List<String>)
 
 /** Dragonfly's taxonomy behind Statistics' Traffic Categories: the groups, and every category's name by id. */
-data class TrafficTaxonomy(val groups: List<CategoryGroup>, val names: Map<String, String>) {
+data class TrafficTaxonomy(val groups: List<CategoryGroup>, val names: Map<String, String>, val dangerous: Set<String> = emptySet()) {
     fun groupOf(cid: String) = groups.firstOrNull { cid in it.categoryIds }
 
     /** The category ids a refinement stands for: "group:tech" is the whole group, anything else one category. */
@@ -422,7 +422,8 @@ fun parseTrafficTaxonomy(groupings: JSONObject, categories: JSONObject): Traffic
     }.filter { it.id.isNotBlank() }
     val cats = categories.optJSONObject("body")?.optJSONObject("categories") ?: JSONObject()
     val names = cats.keys().asSequence().associateWith { cats.optJSONObject(it)?.optString("name").orEmpty().ifBlank { it } }
-    return TrafficTaxonomy(groups, names)
+    val dangerous = cats.keys().asSequence().filter { cats.optJSONObject(it)?.optBoolean("dangerous") == true }.toSet()
+    return TrafficTaxonomy(groups, names, dangerous)
 }
 
 data class TrendItem(val endpointId: String, val baseline: Long, val current: Long)
@@ -454,6 +455,8 @@ data class LogEntry(
     val spoofTarget: String = "",
     /** Row number on the Activity log screen, so rows keep their identity as live queries arrive above them. */
     val seq: Long = 0,
+    /** Dragonfly's categories for the domain at query time (the dashboard's chips), highest confidence first. */
+    val categories: List<LogCategory> = emptyList(),
 ) {
     val epochMs: Long get() = runCatching { java.time.Instant.parse(timestamp).toEpochMilli() }.getOrDefault(0L)
 }
@@ -484,8 +487,14 @@ fun parseLogEntry(o: JSONObject): LogEntry {
         triggerValue = o.optString("triggerValue"),
         asn = geo?.optLong("asn") ?: 0,
         spoofTarget = o.optString("spoofTarget"),
+        categories = o.optJSONArray("categories").objects()
+            .map { LogCategory(it.optString("categoryId"), it.optString("categoryName"), it.optDouble("confidence", 0.0)) }
+            .filter { it.name.isNotBlank() }.sortedByDescending { it.confidence },
     )
 }
+
+/** One category on a log row; the server stamps it when the query is logged, names included. */
+data class LogCategory(val id: String, val name: String, val confidence: Double)
 
 /**
  * The log sends UTC stamps (…21.85Z), the live stream local ones (…14:53:21.85-04:00), and Android 8-13 can't

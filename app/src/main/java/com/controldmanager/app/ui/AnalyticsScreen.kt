@@ -981,6 +981,8 @@ private fun ActivityLogView(
     val devices = rememberLoader { runCatching { session.api.devices() }.getOrDefault(emptyList()) }
     val activity = rememberLoader { runCatching { session.devicesWithActivity(regionOverride(ctx)) }.getOrDefault(emptyList()) }
     val services = rememberLoader { runCatching { session.allServices() }.getOrDefault(emptyMap()) }
+    // Which categories are threats (malware, phishing...), for red chips; log rows don't say, Dragonfly's list does.
+    val dangerousCategories = rememberLoader { runCatching { session.api.trafficTaxonomy().dangerous }.getOrDefault(emptySet()) }
     val filterNames = rememberLoader { runCatching { session.filterNames() }.getOrDefault(emptyMap()) }
     val proxies = rememberLoader { runCatching { session.proxies() }.getOrDefault(emptyList()) }
     val current = rememberLoader(devices.data) { devices.data?.let { runCatching { session.currentEndpointId(ctx, it) }.getOrNull() } }
@@ -1259,6 +1261,7 @@ private fun ActivityLogView(
                                 onLongClick = { selected = if (isSel) selected - e.seq else selected + e.seq },
                                 onInfo = { open = e },
                                 redirect = proxies.data?.firstOrNull { it.pk == e.spoofTarget },
+                                dangerous = dangerousCategories.data.orEmpty(),
                             )
                         }
                     }
@@ -1501,6 +1504,8 @@ private fun LogRow(
     selecting: Boolean, selected: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onInfo: () -> Unit,
     /** Where a redirected query was sent; its flag replaces the redirect globe, as on the dashboard. */
     redirect: Proxy? = null,
+    /** Category ids that are threats, shown in red. */
+    dangerous: Set<String> = emptySet(),
 ) {
     val shape = CdShape
     Column(
@@ -1525,6 +1530,17 @@ private fun LogRow(
             Favicon(e.domain, 18)
             Spacer(Modifier.width(7.dp))
             Text(e.domain, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        }
+        // Dragonfly's categories under the domain: two by name, as the dashboard's chips, then how many more.
+        if (e.categories.isNotEmpty()) Row(Modifier.padding(top = 1.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            val shown = e.categories.take(2)
+            val threat = shown.any { it.id in dangerous }
+            if (threat) { Icon(Solar.ShieldWarning, "Security threat", Modifier.size(12.dp), tint = Palette.Red); Spacer(Modifier.width(3.dp)) }
+            Text(
+                shown.joinToString(" · ") { it.name }, style = MaterialTheme.typography.labelSmall,
+                color = if (threat) Palette.Red else Palette.Teal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+            )
+            if (e.categories.size > 2) Text("  +${e.categories.size - 2}", style = MaterialTheme.typography.labelSmall, color = Palette.Muted)
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(stampFmt.format(Date(e.epochMs)), style = MaterialTheme.typography.labelSmall, color = Palette.Muted)

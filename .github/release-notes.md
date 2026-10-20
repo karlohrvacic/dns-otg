@@ -6,6 +6,7 @@
 - **Traffic Categories** in Statistics: see how your queries split into groups like Tech or Social, look inside a group, and tap any group or category to filter the whole page by it.
 
 ### Improved
+- Activity log: each domain shows its categories underneath (like Advertisements or Streaming Video), in red for threats
 - Activity log: the record type and protocol now sit next to the time, so long domains have more room
 
 Thanks to @karlohrvacic for the live log, the domain details and the roomier log rows!

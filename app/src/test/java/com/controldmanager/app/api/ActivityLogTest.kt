@@ -21,6 +21,21 @@ class ActivityLogTest {
         )
 
     @Test
+    fun `categories come highest confidence first, nameless ones left out`() {
+        val e = parseLogEntry(JSONObject("""{"timestamp":"2026-10-20T18:27:07.193Z","question":"linkedin.com.","categories":[
+            {"categoryId":1004,"categoryName":"Job Search","confidence":0.95},
+            {"categoryId":1069,"categoryName":"Social Networking","confidence":0.99},
+            {"categoryId":1080,"categoryName":"","confidence":0.7}]}"""))
+        assertEquals(listOf("Social Networking", "Job Search"), e.categories.map { it.name })
+        assertEquals("1069", e.categories.first().id)
+    }
+
+    @Test
+    fun `a query without categories has none`() {
+        assertEquals(emptyList<LogCategory>(), parseLogEntry(JSONObject("""{"timestamp":"2026-10-20T18:27:07.193Z","question":"a.example."}""")).categories)
+    }
+
+    @Test
     fun `a streamed query's local-time stamp is stored in UTC`() {
         assertEquals("2026-10-12T18:53:21.850Z", query("2026-10-12T14:53:21.85-04:00").timestamp)
     }
