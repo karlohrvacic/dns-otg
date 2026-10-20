@@ -9,6 +9,12 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.shadow
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.hazeSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -50,6 +56,7 @@ import com.controldmanager.app.R
 import com.controldmanager.app.api.ControlDApi
 import com.controldmanager.app.api.TokenStore
 import com.controldmanager.app.ui.CdButton
+import com.controldmanager.app.ui.CdDialog
 import com.controldmanager.app.ui.CdSwitch
 import com.controldmanager.app.ui.CdTheme
 import com.controldmanager.app.ui.GroupRow
@@ -97,6 +104,11 @@ class WidgetConfigActivity : ComponentActivity() {
                                 p[WidgetKeys.colours] = cfg.colours
                                 p[WidgetKeys.opacity] = cfg.opacity
                                 p[WidgetKeys.background] = cfg.background
+                                p[WidgetKeys.bgColor] = cfg.bgColor
+                                p[WidgetKeys.shadow] = cfg.shadow
+                                p[WidgetKeys.radius] = cfg.radius
+                                p[WidgetKeys.padH] = cfg.padH
+                                p[WidgetKeys.padV] = cfg.padV
                                 p[WidgetKeys.configVersion] = System.currentTimeMillis()
                                 p.remove(WidgetKeys.data); p.remove(WidgetKeys.error); p.remove(WidgetKeys.updated)
                             }
@@ -131,6 +143,7 @@ class WidgetConfigActivity : ComponentActivity() {
         // The screen is the app's background with one rounded window cut out, where the home screen wallpaper
         // shows through behind the preview (the launcher's own widget screens look the same).
         var hole by remember { mutableStateOf<androidx.compose.ui.geometry.Rect?>(null) }
+        val haze = remember { dev.chrisbanes.haze.HazeState() }
         val bg = Palette.Bg
         val radius = with(androidx.compose.ui.platform.LocalDensity.current) { 28.dp.toPx() }
         Box(
@@ -150,10 +163,13 @@ class WidgetConfigActivity : ComponentActivity() {
                     Modifier.padding(horizontal = 12.dp).fillMaxWidth().height(260.dp).onGloballyPositioned { hole = it.boundsInRoot() },
                     contentAlignment = Alignment.Center,
                 ) {
-                    WidgetPreview(cfg, stats ?: SampleStats, wide, WidgetTheme(dark))
+                    // A margin around the widget, so it sits on the wallpaper rather than filling the card.
+                    Box(Modifier.padding(horizontal = 22.dp, vertical = 18.dp), contentAlignment = Alignment.Center) {
+                        WidgetPreview(cfg, stats ?: SampleStats, wide, WidgetTheme(dark))
+                    }
                 }
                 Spacer(Modifier.height(20.dp))
-                Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
+                Column(Modifier.fillMaxWidth().weight(1f).hazeSource(haze).background(Palette.Bg).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
                     if (!signedIn) {
                         Text("Sign in to DNS OTG first, then come back to set up this widget.", color = Palette.Muted, modifier = Modifier.padding(12.dp))
                         CdButton("Open DNS OTG", { startActivity(Intent(this@WidgetConfigActivity, MainActivity::class.java)); finish() }, Modifier.fillMaxWidth())
@@ -166,36 +182,46 @@ class WidgetConfigActivity : ComponentActivity() {
                     ) { pick = "metric" }
                     GroupRow("Time range", first = false, last = false, subtitle = rangeName(cfg.range), subtitleColor = Palette.Teal, fill = Palette.Card) { pick = "range" }
                     GroupRow("Profile", first = false, last = false, subtitle = cfg.profileName ?: "All profiles", subtitleColor = Palette.Teal, fill = Palette.Card) { pick = "profile" }
-                    GroupRow("Endpoint", first = false, last = true, subtitle = cfg.endpointName ?: "All endpoints", subtitleColor = Palette.Teal, fill = Palette.Card) { pick = "endpoint" }
-                    Spacer(Modifier.height(16.dp))
-                    // How it looks.
-                    GroupRow(
-                        "Background", first = true, last = false, fill = Palette.Card,
-                        trailing = { CdSwitch(cfg.background, { cfg = cfg.copy(background = it) }) },
-                    ) { cfg = cfg.copy(background = !cfg.background) }
-                    Column(Modifier.fillMaxWidth().background(Palette.Card).padding(horizontal = 16.dp, vertical = 10.dp)) {
-                        Text("Opacity", color = if (cfg.background) Palette.Text else Palette.Muted)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkerboard(Modifier.size(26.dp))
-                            Spacer(Modifier.width(14.dp))
-                            Slider(
-                                value = cfg.opacity.toFloat(), onValueChange = { cfg = cfg.copy(opacity = (it / 5).toInt() * 5) }, valueRange = 0f..100f,
-                                enabled = cfg.background, modifier = Modifier.weight(1f),
-                                colors = SliderDefaults.colors(thumbColor = Palette.Teal, activeTrackColor = Palette.Teal, inactiveTrackColor = Palette.Outline),
-                            )
-                        }
-                    }
+                    GroupRow("Endpoint", first = false, last = false, subtitle = cfg.endpointName ?: "All endpoints", subtitleColor = Palette.Teal, fill = Palette.Card) { pick = "endpoint" }
                     GroupRow(
                         "Colours", first = false, last = true, subtitle = colourNames.first { it.first == cfg.colours }.second,
                         subtitleColor = Palette.Teal, fill = Palette.Card,
                     ) { pick = "colours" }
+                    // Background: on or off, then its effect and its shape (as the launcher's own background settings).
+                    SectionHeader("Background")
+                    GroupRow(
+                        if (cfg.background) "On" else "Off", first = true, last = true, fill = Palette.Card,
+                        titleColor = if (cfg.background) Palette.Teal else Palette.Text,
+                        trailing = { CdSwitch(cfg.background, { cfg = cfg.copy(background = it) }) },
+                    ) { cfg = cfg.copy(background = !cfg.background) }
+                    val on = cfg.background
+                    SectionHeader("Effect")
+                    GroupRow(
+                        "Shadow", first = true, last = true, fill = Palette.Card, titleColor = if (on) Palette.Text else Palette.Muted,
+                        trailing = { CdSwitch(cfg.shadow, { if (on) cfg = cfg.copy(shadow = it) }, enabled = on) },
+                    ) { if (on) cfg = cfg.copy(shadow = !cfg.shadow) }
+                    SectionHeader("Configuration")
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Palette.Card)) {
+                        Row(
+                            Modifier.fillMaxWidth().clickable(enabled = on) { pick = "bgcolor" }.padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Background colour", color = if (on) Palette.Text else Palette.Muted, modifier = Modifier.weight(1f))
+                            ColourSwatch(cfg.bgColor, dark, Modifier.size(width = 52.dp, height = 30.dp))
+                        }
+                        SliderRow("Alpha", cfg.opacity, 0..100, on) { cfg = cfg.copy(opacity = it) }
+                        SliderRow("Corner radius", cfg.radius, 0..40, on) { cfg = cfg.copy(radius = it) }
+                        SliderRow("Horizontal padding", cfg.padH, 4..28, on) { cfg = cfg.copy(padH = it) }
+                        SliderRow("Vertical padding", cfg.padV, 4..28, on, last = true) { cfg = cfg.copy(padV = it) }
+                    }
                     // Room for the floating Cancel / Save bar.
                     Spacer(Modifier.height(110.dp))
                 }
             }
             Row(
                 Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 14.dp)
-                    .clip(RoundedCornerShape(50)).background(Palette.CardHigh).padding(horizontal = 8.dp),
+                    .clip(RoundedCornerShape(50)).hazeEffect(haze, com.controldmanager.app.ui.Glass)
+                    .border(1.dp, com.controldmanager.app.ui.GlassEdge, RoundedCornerShape(50)).padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(onClick = { finish() }) { Text("Cancel", color = Palette.Text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) }
@@ -212,6 +238,7 @@ class WidgetConfigActivity : ComponentActivity() {
             "range" -> PickerDialog("Time range", WidgetRanges.map { it.first }, label = { rangeName(it) }, selected = { it == cfg.range }, onDismiss = { pick = null }) {
                 cfg = cfg.copy(range = it)
             }
+            "bgcolor" -> ColourDialog(cfg.bgColor, dark, onDismiss = { pick = null }) { cfg = cfg.copy(bgColor = it) }
             "colours" -> PickerDialog("Colours", colourNames, label = { it.second }, selected = { it.first == cfg.colours }, onDismiss = { pick = null }) {
                 cfg = cfg.copy(colours = it.first)
             }
@@ -229,17 +256,51 @@ class WidgetConfigActivity : ComponentActivity() {
 
 private val colourNames = listOf("app" to "Match app setting", "light" to "Light", "dark" to "Dark")
 
-/** The see-through sign next to the opacity slider. */
+/** Background colours to pick from; "auto" is the theme's own card colour. */
+private val BgColours = listOf("auto", "#111628", "#000000", "#2B2D31", "#1D3557", "#0E3B2E", "#2A1F4D", "#4A1F2A", "#FFFFFF", "#E8F5EE")
+
+private fun swatchColour(key: String, dark: Boolean): Color =
+    if (key == "auto") WidgetTheme(dark).bg else runCatching { Color(android.graphics.Color.parseColor(key)) }.getOrDefault(Color.Black)
+
 @Composable
-private fun Checkerboard(modifier: Modifier) {
-    val light = Palette.Muted
-    val dark = Palette.Outline
-    Canvas(modifier.clip(androidx.compose.foundation.shape.CircleShape)) {
-        val n = 4
-        val cell = size.width / n
-        for (i in 0 until n) for (j in 0 until n) {
-            drawRect(if ((i + j) % 2 == 0) light else dark, Offset(i * cell, j * cell), androidx.compose.ui.geometry.Size(cell, cell))
-        }
+private fun ColourSwatch(key: String, dark: Boolean, modifier: Modifier) {
+    Box(modifier.clip(RoundedCornerShape(50)).background(swatchColour(key, dark)).border(1.5.dp, Palette.Muted, RoundedCornerShape(50)), contentAlignment = Alignment.Center) {
+        if (key == "auto") Text("Auto", fontSize = 10.sp, color = WidgetTheme(dark).muted)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ColourDialog(selected: String, dark: Boolean, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    CdDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Background colour") },
+        text = {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                BgColours.forEach { key ->
+                    Box(
+                        Modifier.size(48.dp).clip(CircleShape).background(swatchColour(key, dark))
+                            .border(if (key == selected) 3.dp else 1.dp, if (key == selected) Palette.Teal else Palette.Muted, CircleShape)
+                            .clickable { onPick(key); onDismiss() },
+                        contentAlignment = Alignment.Center,
+                    ) { if (key == "auto") Text("Auto", fontSize = 11.sp, color = WidgetTheme(dark).muted) }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+    )
+}
+
+/** A label above a slider, in the Configuration list; [last] drops the divider under it. */
+@Composable
+private fun SliderRow(label: String, value: Int, range: IntRange, enabled: Boolean, last: Boolean = false, onChange: (Int) -> Unit) {
+    androidx.compose.material3.HorizontalDivider(color = Palette.Outline, modifier = Modifier.padding(horizontal = 16.dp))
+    Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = if (last) 8.dp else 4.dp)) {
+        Text(label, color = if (enabled) Palette.Text else Palette.Muted)
+        Slider(
+            value = value.toFloat(), onValueChange = { onChange(it.toInt()) }, valueRange = range.first.toFloat()..range.last.toFloat(), enabled = enabled,
+            colors = SliderDefaults.colors(thumbColor = Palette.Teal, activeTrackColor = Palette.Teal, inactiveTrackColor = Palette.Outline),
+        )
     }
 }
 
@@ -258,10 +319,16 @@ private val SampleStats = WidgetStats(
 /** The widget drawn as it will look (same layout, colours and numbers as on the home screen). */
 @Composable
 private fun WidgetPreview(cfg: WidgetConfig, s: WidgetStats, wide: Boolean, t: WidgetTheme) {
-    val shape = RoundedCornerShape(22.dp)
+    val shape = RoundedCornerShape(cfg.radius.dp)
+    val bg = when {
+        !cfg.background -> Color.Transparent
+        else -> cfg.customBg() ?: t.bg.copy(alpha = cfg.opacity / 100f)
+    }
+    val shadow = cfg.background && cfg.shadow
     Box(
         (if (wide) Modifier.fillMaxWidth().widthIn(max = 380.dp).height(170.dp) else Modifier.size(170.dp))
-            .clip(shape).background(t.bg.copy(alpha = if (cfg.background) cfg.opacity / 100f else 0f)).padding(12.dp),
+            .then(if (shadow) Modifier.padding(ShadowInset).shadow(4.dp, shape, clip = false) else Modifier)
+            .clip(shape).background(bg).padding(horizontal = cfg.padH.dp, vertical = cfg.padV.dp),
     ) {
         Row(Modifier.fillMaxSize()) {
             Column(if (wide) Modifier.width(118.dp).fillMaxHeight() else Modifier.fillMaxSize()) {

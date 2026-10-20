@@ -100,13 +100,13 @@ private val SideMargin = 12.dp
 private val FabGap = 8.dp
 
 /** Glass: Control D navy at 60% over a uniform 48 background blur (shared by nav, menus, sheets and toasts). */
-private val Glass get() = HazeStyle(
+internal val Glass get() = HazeStyle(
     backgroundColor = Palette.Bg,
     tint = HazeTint(Palette.Card.copy(alpha = 0.6f)),
     blurRadius = 48.dp,
     noiseFactor = 0.06f,
 )
-private val GlassEdge get() = Palette.Ink.copy(alpha = 0.08f)
+internal val GlassEdge get() = Palette.Ink.copy(alpha = 0.08f)
 private val Indicator get() = Palette.Ink.copy(alpha = if (Palette.light) 0.08f else 0.16f)
 
 /**

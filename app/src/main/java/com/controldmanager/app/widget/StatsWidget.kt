@@ -93,6 +93,12 @@ internal data class WidgetConfig(
     /** Whether the widget has a background at all, and how opaque it is (0 to 100). */
     val background: Boolean = true,
     val opacity: Int = 100,
+    /** "auto" uses the theme's card colour; otherwise a colour as #RRGGBB. */
+    val bgColor: String = "auto",
+    val shadow: Boolean = false,
+    val radius: Int = 22,
+    val padH: Int = 12,
+    val padV: Int = 12,
 ) {
     val rangeSeconds: Long get() = WidgetRanges.firstOrNull { it.first == range }?.second ?: 86_400
 }
@@ -116,6 +122,11 @@ internal object WidgetKeys {
     val colours = stringPreferencesKey("colours")
     val opacity = intPreferencesKey("opacity")
     val background = booleanPreferencesKey("background")
+    val bgColor = stringPreferencesKey("bg_color")
+    val shadow = booleanPreferencesKey("shadow")
+    val radius = intPreferencesKey("radius")
+    val padH = intPreferencesKey("pad_h")
+    val padV = intPreferencesKey("pad_v")
     /** Bumped on every settings change, so the widget loads again for the new settings. */
     val configVersion = longPreferencesKey("config_version")
     val data = stringPreferencesKey("data")
@@ -134,7 +145,20 @@ internal fun Preferences.widgetConfig() = WidgetConfig(
     colours = this[WidgetKeys.colours] ?: "app",
     opacity = this[WidgetKeys.opacity] ?: 100,
     background = this[WidgetKeys.background] ?: true,
+    bgColor = this[WidgetKeys.bgColor] ?: "auto",
+    shadow = this[WidgetKeys.shadow] ?: false,
+    radius = this[WidgetKeys.radius] ?: 22,
+    padH = this[WidgetKeys.padH] ?: 12,
+    padV = this[WidgetKeys.padV] ?: 12,
 )
+
+/** Room left around the background for its shadow to show. */
+internal val ShadowInset = 5.dp
+
+/** The background colour as set, at the chosen alpha; null for "auto" (the theme's own). */
+internal fun WidgetConfig.customBg(): Color? = bgColor.takeIf { it != "auto" }
+    ?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() }
+    ?.copy(alpha = opacity.coerceIn(0, 100) / 100f)
 
 private fun WidgetStats.toJson() = JSONObject()
     .put("b", blocked).put("p", bypassed).put("r", redirected).put("t", total)
@@ -240,7 +264,7 @@ class StatsWidget : GlanceAppWidget() {
                 if (stats == null && prefs[WidgetKeys.error] == null || age > STALE_MS) refreshWidget(context, id)
             }
             val cfg = prefs.widgetConfig()
-            WidgetContent(context, cfg, stats, prefs[WidgetKeys.error], prefs[WidgetKeys.refreshing] == true, WidgetColors(widgetDark(context, cfg.colours), if (cfg.background) cfg.opacity else 0))
+            WidgetContent(context, cfg, stats, prefs[WidgetKeys.error], prefs[WidgetKeys.refreshing] == true, WidgetColors(widgetDark(context, cfg.colours), cfg.opacity))
         }
     }
 }
@@ -308,9 +332,20 @@ private fun WidgetContent(context: Context, cfg: WidgetConfig, stats: WidgetStat
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra(OpenRequest.EXTRA_RANGE, cfg.range).putExtra(OpenRequest.EXTRA_SECONDS, cfg.rangeSeconds)
     }
-    Box(
-        GlanceModifier.fillMaxSize().cornerRadius(22.dp).background(c.bg).clickable(actionStartActivity(open)).padding(12.dp),
-    ) {
+    val shadow = cfg.background && cfg.shadow
+    val inset = if (shadow) ShadowInset else 0.dp
+    val bg: ColorProvider = when {
+        !cfg.background -> ColorProvider(Color.Transparent)
+        else -> cfg.customBg()?.let { ColorProvider(it) } ?: c.bg
+    }
+    // Widgets can't cast shadows, so the shadow is a picture behind the background, drawn to the widget's size.
+    Box(GlanceModifier.fillMaxSize().clickable(actionStartActivity(open))) {
+        if (shadow) {
+            val bitmap = remember(size, cfg.radius) { shadowBitmap(context, size.width.value, size.height.value, cfg.radius.toFloat(), ShadowInset.value) }
+            Image(ImageProvider(bitmap), null, GlanceModifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+        }
+        Box(GlanceModifier.fillMaxSize().padding(inset)) {
+        Box(GlanceModifier.fillMaxSize().cornerRadius(cfg.radius.dp).background(bg).padding(horizontal = cfg.padH.dp, vertical = cfg.padV.dp)) {
         Row(GlanceModifier.fillMaxSize()) {
             Column(if (wide) GlanceModifier.width(118.dp).fillMaxHeight() else GlanceModifier.fillMaxSize()) {
                 Header(cfg, refreshing, showRefresh = !wide, c)
@@ -334,8 +369,8 @@ private fun WidgetContent(context: Context, cfg: WidgetConfig, stats: WidgetStat
                     }
                     if (stats != null) {
                         // The chart's own area: the widget minus padding, the number column, the title row and the legend.
-                        val chartW = (size.width - 24.dp - 118.dp - 12.dp).value.coerceAtLeast(40f)
-                        val chartH = (size.height - 24.dp - 26.dp - 18.dp - 8.dp).value.coerceAtLeast(30f)
+                        val chartW = (size.width - inset * 2 - (cfg.padH * 2).dp - 118.dp - 12.dp).value.coerceAtLeast(40f)
+                        val chartH = (size.height - inset * 2 - (cfg.padV * 2).dp - 26.dp - 18.dp - 8.dp).value.coerceAtLeast(30f)
                         Chart(context, stats, chartW, chartH, GlanceModifier.fillMaxWidth().defaultWeight().padding(vertical = 4.dp))
                         // Labels only when they fit; the colours already say which is which.
                         val labels = size.width >= 320.dp
@@ -350,7 +385,29 @@ private fun WidgetContent(context: Context, cfg: WidgetConfig, stats: WidgetStat
                 }
             }
         }
+        }
+        }
     }
+}
+
+/** A soft shadow around (not under) a rounded rectangle [insetDp] inside the picture; the inside stays clear. */
+private fun shadowBitmap(context: Context, wDp: Float, hDp: Float, radiusDp: Float, insetDp: Float): Bitmap {
+    val scale = minOf(context.resources.displayMetrics.density, 900f / wDp.coerceAtLeast(1f), 900f / hDp.coerceAtLeast(1f))
+    val w = (wDp * scale).toInt().coerceAtLeast(1)
+    val h = (hDp * scale).toInt().coerceAtLeast(1)
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bmp)
+    val inset = insetDp * scale
+    val rect = android.graphics.RectF(inset, inset, w - inset, h - inset)
+    val r = radiusDp * scale
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.BLACK
+        setShadowLayer(inset * 0.9f, 0f, inset * 0.35f, android.graphics.Color.argb(110, 0, 0, 0))
+    }
+    canvas.drawRoundRect(rect, r, r, paint)
+    // Clear the inside, so a see-through background stays see-through.
+    canvas.drawRoundRect(rect, r, r, Paint(Paint.ANTI_ALIAS_FLAG).apply { xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.CLEAR) })
+    return bmp
 }
 
 /** App icon and name, the time range (and what it's limited to), and on the small widget the refresh button. */
