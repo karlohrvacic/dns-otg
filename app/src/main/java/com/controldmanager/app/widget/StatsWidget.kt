@@ -260,7 +260,7 @@ internal fun widgetDark(ctx: Context, colours: String): Boolean? {
     return when (mode) { "light" -> false; "dark" -> true; else -> null }
 }
 
-private class WidgetColors(dark: Boolean?, opacity: Int) {
+private class WidgetColors(private val dark: Boolean?, opacity: Int) {
     private val d = WidgetTheme(true)
     private val l = WidgetTheme(false)
     private fun pick(f: (WidgetTheme) -> Color): ColorProvider = when (dark) {
