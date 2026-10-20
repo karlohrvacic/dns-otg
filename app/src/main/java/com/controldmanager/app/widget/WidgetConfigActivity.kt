@@ -12,7 +12,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.draw.shadow
 import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -105,7 +104,6 @@ class WidgetConfigActivity : ComponentActivity() {
                                 p[WidgetKeys.opacity] = cfg.opacity
                                 p[WidgetKeys.background] = cfg.background
                                 p[WidgetKeys.bgColor] = cfg.bgColor
-                                p[WidgetKeys.shadow] = cfg.shadow
                                 p[WidgetKeys.radius] = cfg.radius
                                 p[WidgetKeys.padH] = cfg.padH
                                 p[WidgetKeys.padV] = cfg.padV
@@ -156,8 +154,8 @@ class WidgetConfigActivity : ComponentActivity() {
         ) {
             Column(Modifier.fillMaxSize().statusBarsPadding()) {
                 Text(
-                    "Widget settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = Palette.Teal,
-                    modifier = Modifier.padding(start = 24.dp, top = 28.dp, bottom = 24.dp),
+                    "Widget settings", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = Palette.Teal,
+                    modifier = Modifier.padding(start = 24.dp, top = 24.dp, bottom = 20.dp),
                 )
                 Box(
                     Modifier.padding(horizontal = 12.dp).fillMaxWidth().height(260.dp).onGloballyPositioned { hole = it.boundsInRoot() },
@@ -195,11 +193,6 @@ class WidgetConfigActivity : ComponentActivity() {
                         trailing = { CdSwitch(cfg.background, { cfg = cfg.copy(background = it) }) },
                     ) { cfg = cfg.copy(background = !cfg.background) }
                     val on = cfg.background
-                    SectionHeader("Effect")
-                    GroupRow(
-                        "Shadow", first = true, last = true, fill = Palette.Card, titleColor = if (on) Palette.Text else Palette.Muted,
-                        trailing = { CdSwitch(cfg.shadow, { if (on) cfg = cfg.copy(shadow = it) }, enabled = on) },
-                    ) { if (on) cfg = cfg.copy(shadow = !cfg.shadow) }
                     SectionHeader("Configuration")
                     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(Palette.Card)) {
                         Row(
@@ -324,10 +317,8 @@ private fun WidgetPreview(cfg: WidgetConfig, s: WidgetStats, wide: Boolean, t: W
         !cfg.background -> Color.Transparent
         else -> cfg.customBg() ?: t.bg.copy(alpha = cfg.opacity / 100f)
     }
-    val shadow = cfg.background && cfg.shadow
     Box(
         (if (wide) Modifier.fillMaxWidth().widthIn(max = 380.dp).height(170.dp) else Modifier.size(170.dp))
-            .then(if (shadow) Modifier.padding(ShadowInset).shadow(4.dp, shape, clip = false) else Modifier)
             .clip(shape).background(bg).padding(horizontal = cfg.padH.dp, vertical = cfg.padV.dp),
     ) {
         Row(Modifier.fillMaxSize()) {
