@@ -20,7 +20,7 @@ android {
         applicationId = "app.dnsotg"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
+        versionCode = 23
         versionName = "1.0.3"
     }
 

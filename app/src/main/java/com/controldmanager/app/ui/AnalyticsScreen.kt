@@ -247,6 +247,9 @@ private fun StatisticsView(region: String, range: TimeRange, onRefresh: () -> Un
     var geoTab by rememberSaveable { mutableIntStateOf(0) }
     var protocol by rememberSaveable { mutableStateOf<String?>(null) }
     var refine by rememberSaveable { mutableStateOf<Int?>(null) }
+    // Traffic Categories refinement, as the dashboard writes it: "group:tech" for a group, "1018" for one category.
+    var category by rememberSaveable { mutableStateOf<String?>(null) }
+    val taxonomy = rememberLoader { runCatching { session.api.trafficTaxonomy() }.getOrNull() }
     val devices = rememberLoader { runCatching { session.api.devices() }.getOrDefault(emptyList()) }
     val profiles = rememberLoader { runCatching { session.api.profiles() }.getOrDefault(emptyList()) }
     val services = rememberLoader { runCatching { session.allServices() }.getOrDefault(emptyMap()) }
@@ -255,7 +258,8 @@ private fun StatisticsView(region: String, range: TimeRange, onRefresh: () -> Un
     val activity = rememberLoader { runCatching { session.devicesWithActivity(regionOverride(ctx)) }.getOrDefault(emptyList()) }
     LiveRefresh(activity)
     val refineActions = refine?.let { if (it == Do.REDIRECT) listOf(Do.SPOOF, Do.REDIRECT) else listOf(it) }
-    val scope = StatScope(endpoint?.pk, profile?.pk, protocol, refineActions)
+    val categoryIds = category?.let { c -> taxonomy.data?.idsFor(c) ?: listOf(c).takeUnless { c.startsWith(TrafficTaxonomy.GROUP_PREFIX) } }
+    val scope = StatScope(endpoint?.pk, profile?.pk, protocol, refineActions, categoryIds)
     val api = session.api
 
     val overview = rememberLoader(region, range, scope) {
@@ -278,7 +282,7 @@ private fun StatisticsView(region: String, range: TimeRange, onRefresh: () -> Un
         }
     }
     // The panel lists every endpoint (only the profile filter applies), so a refined endpoint stays in context.
-    val panelScope = StatScope(profileId = profile?.pk, protocol = protocol, actions = refineActions)
+    val panelScope = StatScope(profileId = profile?.pk, protocol = protocol, actions = refineActions, categories = categoryIds)
     val endpointsData = rememberLoader(region, range, panelScope, endpointMode) {
         val base: List<Pair<CountItem, TrendItem?>> = when (endpointMode) {
             0 -> api.statTrend(region, range, panelScope).map { CountItem(it.endpointId, it.current) to it }
@@ -289,7 +293,7 @@ private fun StatisticsView(region: String, range: TimeRange, onRefresh: () -> Un
             base.map { (c, t) ->
                 async {
                     val top = runCatching {
-                        api.statBy(region, range, StatScope(c.value, profile?.pk, protocol, refineActions), "triggerValue", listOf("trigger" to "filter"), limit = 1)
+                        api.statBy(region, range, StatScope(c.value, profile?.pk, protocol, refineActions, categoryIds), "triggerValue", listOf("trigger" to "filter"), limit = 1)
                             .firstOrNull()?.value
                     }.getOrNull()
                     top?.let { id -> session.filterParent(id)?.let { filterParentCache[id] = it } }
@@ -311,6 +315,7 @@ private fun StatisticsView(region: String, range: TimeRange, onRefresh: () -> Un
             listOf(filters.await(), svc.await(), domains.await(), rules.await())
         }
     }
+    val categoryData = rememberLoader(region, range, scope) { loadCategoryStats(api, region, range, scope) }
     val geoData = rememberLoader(region, range, scope, geoTab) {
         val fields = when (geoTab) {
             0 -> listOf("srcCountry"); 1 -> listOf("dstCountry")
@@ -355,6 +360,15 @@ private fun StatisticsView(region: String, range: TimeRange, onRefresh: () -> Un
                 selected = true, onClick = { protocol = null },
                 label = { Text(label) },
                 leadingIcon = { StatGlyph(icon, 16, Palette.Teal) },
+                trailingIcon = { Icon(Solar.Close, "Remove refinement", Modifier.size(16.dp)) },
+            )
+        }
+        category?.let { c ->
+            Spacer(Modifier.height(6.dp))
+            CdChip(
+                selected = true, onClick = { category = null },
+                label = { Text(categoryChipLabel(taxonomy.data, c), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingIcon = { Icon(Solar.Shield, null, Modifier.size(16.dp)) },
                 trailingIcon = { Icon(Solar.Close, "Remove refinement", Modifier.size(16.dp)) },
             )
         }
@@ -433,6 +447,7 @@ private fun StatisticsView(region: String, range: TimeRange, onRefresh: () -> Un
                     filterNames.data, endpoint?.pk,
                 ) { endpoint = it }
             }
+            item { TrafficCategoriesCard(categoryData, category) { category = it } }
             item {
                 TabbedCard(actionTabs.map { it.second }, actionTab, { actionTab = it }, statColor(actionTabs[actionTab].first)) {
                     val color = statColor(actionTabs[actionTab].first)

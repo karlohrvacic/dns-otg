@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
 /** One "Your current IP Address" row: address, country and network. */
 private data class SeenIp(val ip: String, val country: String, val org: String)
 
-/** The DNS block of controld.com/status. [resolver] is null when this device isn't using Control D. */
+/** The DNS block of controld.com/config. [resolver] is null when this device isn't using Control D. */
 private data class DnsStatus(val resolver: String?, val protocol: String?, val latencyMs: Int?, val host: String?, val ip: String?)
 
 private data class Status(val v4: SeenIp?, val v6: SeenIp?, val dns: DnsStatus)
@@ -73,7 +73,7 @@ private fun protocolName(p: String?) = when (p?.lowercase()) {
     else -> p.uppercase()
 }
 
-/** "Your current IP Address" and "DNS" from controld.com/status, for the device the app runs on. */
+/** "Your current IP Address" and "DNS" from controld.com/config, for the device the app runs on. */
 @Composable
 fun StatusSection() {
     val ctx = LocalContext.current

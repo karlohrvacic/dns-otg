@@ -389,7 +389,41 @@ data class StatScope(
     val protocol: String? = null,
     /** Action refinement (dashboard's Blocked/Bypassed/Redirected tiles): 0 blocked, 1 bypassed, 2+3 redirected. */
     val actions: List<Int>? = null,
+    /** Traffic Categories refinement: Dragonfly category ids (cid[]), a whole group's or a single one. */
+    val categories: List<String>? = null,
 )
+
+/** One of Dragonfly's category groups (Tech, Tools & Network…); each category belongs to one group at most. */
+data class CategoryGroup(val id: String, val name: String, val categoryIds: List<String>)
+
+/** Dragonfly's taxonomy behind Statistics' Traffic Categories: the groups, and every category's name by id. */
+data class TrafficTaxonomy(val groups: List<CategoryGroup>, val names: Map<String, String>) {
+    fun groupOf(cid: String) = groups.firstOrNull { cid in it.categoryIds }
+
+    /** The category ids a refinement stands for: "group:tech" is the whole group, anything else one category. */
+    fun idsFor(refinement: String): List<String>? =
+        if (refinement.startsWith(GROUP_PREFIX)) groups.firstOrNull { it.id == refinement.removePrefix(GROUP_PREFIX) }?.categoryIds
+        else listOf(refinement)
+
+    fun label(refinement: String): String =
+        if (refinement.startsWith(GROUP_PREFIX)) groups.firstOrNull { it.id == refinement.removePrefix(GROUP_PREFIX) }?.name ?: refinement
+        else names[refinement] ?: refinement
+
+    companion object {
+        const val GROUP_PREFIX = "group:"
+        const val UNCLASSIFIED = "0"
+    }
+}
+
+fun parseTrafficTaxonomy(groupings: JSONObject, categories: JSONObject): TrafficTaxonomy {
+    val groups = groupings.optJSONObject("body")?.optJSONArray("groupings").objects().map { g ->
+        val ids = g.optJSONArray("categoryIds")
+        CategoryGroup(g.optString("id"), g.optString("name"), (0 until (ids?.length() ?: 0)).map { ids!!.opt(it).toString() })
+    }.filter { it.id.isNotBlank() }
+    val cats = categories.optJSONObject("body")?.optJSONObject("categories") ?: JSONObject()
+    val names = cats.keys().asSequence().associateWith { cats.optJSONObject(it)?.optString("name").orEmpty().ifBlank { it } }
+    return TrafficTaxonomy(groups, names)
+}
 
 data class TrendItem(val endpointId: String, val baseline: Long, val current: Long)
 

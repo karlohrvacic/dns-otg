@@ -35,13 +35,13 @@
 
 **Endpoints.** See every device with its last activity, profile, analytics level and ctrld version. Create, edit and delete endpoints, check resolvers, and manage clients and known IPs.
 
-**Statistics.** Blocked, bypassed and redirected totals, a security overview, query charts, trends and top lists, for any time range, profile or endpoint.
+**Statistics.** Blocked, bypassed and redirected totals, a security overview, query charts, traffic categories, trends and top lists, for any time range, profile or endpoint.
 
-**Activity log.** Live DNS queries with filters for endpoint, client, action, protocol and more. Open any query for details, or turn it into a rule with one tap.
+**Activity log.** DNS queries with filters for endpoint, client, action, protocol and more, live as they happen if you like. Open any query for details, including what Control D's Dragonfly knows about the domain, or turn it into a rule with one tap.
 
 **Domain Test.** Check how any endpoint answers a domain (blocked, bypassed or redirected, and by which filter, service or rule).
 
-**Account.** Billing and receipts, account settings, Control D's changelog, and the same status check as controld.com/status.
+**Account.** Billing and receipts, account settings, Control D's changelog, and the same check as controld.com/config.
 
 <table>
   <tr>

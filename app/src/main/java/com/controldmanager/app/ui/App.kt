@@ -476,7 +476,7 @@ private fun AccountScreen(nav: NavHostController, onLogout: () -> Unit) {
                 { ThemePref.set(ctx, listOf("system", "light", "dark")[it]) },
             )
 
-            // Same as controld.com/status: what this device looks like to Control D.
+            // Same as controld.com/config: what this device looks like to Control D.
             StatusSection()
 
             Spacer(Modifier.height(20.dp))

@@ -24,6 +24,9 @@ import java.util.concurrent.TimeUnit
 
 class ApiException(message: String, val code: Int = 0) : Exception(message)
 
+/** Dragonfly's category taxonomy is the same for every account and rarely changes, so it is fetched once. */
+@Volatile private var taxonomy: TrafficTaxonomy? = null
+
 /**
  * Thin client for https://api.controld.com (see https://docs.controld.com/reference).
  * Every response is wrapped as {"body": ..., "success": bool, "error": {...}}.
@@ -260,7 +263,27 @@ class ControlDApi(private val token: String, private val orgId: String?) {
 
     private fun scoped(r: TimeRange, s: StatScope) = range(r, s.endpointId) +
         listOfNotNull(s.profileId?.let { "profileId" to it }, s.protocol?.let { "protocol[]" to it }) +
-        s.actions.orEmpty().map { "action[]" to "$it" }
+        s.actions.orEmpty().map { "action[]" to "$it" } +
+        s.categories.orEmpty().map { "cid[]" to it }
+
+    /**
+     * Queries per Dragonfly category id, as Traffic Categories counts them. A query can have several categories,
+     * so these overlap; categories without queries are left out, and "0" is Unclassified.
+     */
+    suspend fun statCategories(region: String, r: TimeRange, s: StatScope): Map<String, Long> =
+        analytics(region, "/statistic/count/cid", scoped(r, s)).optJSONArray("counts").objects()
+            .associate { it.optString("value") to it.optLong("count") }
+
+    /** Dragonfly's category groups and names (public, so no token). Kept for the app's lifetime once loaded. */
+    suspend fun trafficTaxonomy(): TrafficTaxonomy = taxonomy ?: withContext(Dispatchers.IO) {
+        fun get(path: String) = client.newCall(
+            Request.Builder().url("https://api.dragonfly.controld.com/api/v1/$path").header("Accept", "application/json").build()
+        ).execute().use { r ->
+            if (!r.isSuccessful) throw ApiException("Dragonfly: HTTP ${r.code}", r.code)
+            JSONObject(r.body?.string().orEmpty())
+        }
+        parseTrafficTaxonomy(get("category-groupings"), get("categories")).also { if (it.groups.isNotEmpty()) taxonomy = it }
+    }
 
     /** Total queries matching [filters] (e.g. protocol[], srcCountry[], trigger/triggerValue[]). */
     suspend fun statCount(region: String, r: TimeRange, s: StatScope, filters: List<Pair<String, String>> = emptyList()): Long =
