@@ -33,7 +33,7 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
-import androidx.glance.appwidget.action.actionStartActivity
+import androidx.glance.action.actionStartActivity
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.state.getAppWidgetState
@@ -232,7 +232,7 @@ class StatsWidget : GlanceAppWidget() {
 }
 
 /** The app's palette, following its Appearance setting (System follows the phone's dark mode). */
-private class WidgetColors(theme: String) {
+private class WidgetColors(private val theme: String) {
     private fun pick(dark: Long, light: Long): ColorProvider = when (theme) {
         "light" -> ColorProvider(Color(light))
         "dark" -> ColorProvider(Color(dark))
