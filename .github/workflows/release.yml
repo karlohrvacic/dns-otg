@@ -47,7 +47,7 @@ jobs:
       - name: Build
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew testReleaseUnitTest assembleRelease
 
       - name: Check it is signed with the release key
         run: |

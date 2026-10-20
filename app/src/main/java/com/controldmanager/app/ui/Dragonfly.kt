@@ -123,22 +123,27 @@ private fun DragonflyReport(intel: DomainIntel) {
         Text(it, style = MaterialTheme.typography.bodySmall, color = Palette.Muted, modifier = Modifier.padding(vertical = 4.dp))
     }
     intel.categories.forEach { IntelCategoryRow(it) }
-    intel.screenshotUrl?.let { SiteScreenshot(it) }
     intel.http?.let { h ->
-        KeyValueRow("HTTP", listOf("${h.statusCode}", h.contentType.substringBefore(';'), h.finalUrl).filter { it.isNotBlank() }.joinToString(" · "))
+        val redirects = h.redirects?.takeIf { it > 0 }?.let { if (it == 1) "1 redirect" else "$it redirects" }
+        // The final address on its own line: it is usually the longest part.
+        val summary = listOfNotNull(h.statusCode.takeIf { it > 0 }?.toString(), h.contentType.substringBefore(';').trim(), redirects).filter { it.isNotBlank() }.joinToString(" · ")
+        listOf(summary, h.finalUrl).filter { it.isNotBlank() }.joinToString("\n").takeIf { it.isNotBlank() }?.let { KeyValueRow("HTTP", it) }
+    }
+    intel.netlog?.let { n ->
+        val line = "${n.total} requests" + (n.topDomain.takeIf { it.isNotBlank() }?.let { " · most to $it" } ?: "")
+        KeyValueRow("Network log", listOf(line, n.types.joinToString(", ")).filter { it.isNotBlank() }.joinToString("\n"))
     }
     intel.tls?.let { t ->
-        KeyValueRow("TLS", listOfNotNull(t.protocols, t.issuerName, intelDate(t.validUntil)?.let { "expires $it" }).filter { it.isNotBlank() }.joinToString(" · "))
+        KeyValueRow("TLS", listOfNotNull(t.protocols, t.issuerLabel, intelDate(t.validUntil)?.let { "expires $it" }).filter { it.isNotBlank() }.joinToString(" · "))
     }
     intel.whois?.let { w ->
         // Two rows: a long owner and registrar would otherwise push the dates out of a two-line row.
         listOf(w.organization, w.registrar).filter { it.isNotBlank() }.joinToString(" · ").takeIf { it.isNotBlank() }?.let { KeyValueRow("WHOIS", it) }
-        listOfNotNull(intelDate(w.created), intelDate(w.expires)?.let { "expires $it" }).joinToString(" · ").takeIf { it.isNotBlank() }
-            ?.let { KeyValueRow("Registered", it) }
+        listOfNotNull(intelDate(w.created), intelDate(w.updated)?.let { "updated $it" }, intelDate(w.expires)?.let { "expires $it" })
+            .joinToString(" · ").takeIf { it.isNotBlank() }?.let { KeyValueRow("Registered", it) }
     }
-    intel.netlog?.let { n ->
-        KeyValueRow("Network log", "${n.total} requests" + (n.topDomain.takeIf { it.isNotBlank() }?.let { " · most to $it" } ?: ""))
-    }
+    // Last, as on the dashboard: the picture is the tallest part.
+    intel.screenshotUrl?.let { SiteScreenshot(it) }
 }
 
 /** Dragonfly's screenshot of the site (taken at 1920 × 1080); left out when it doesn't load. */

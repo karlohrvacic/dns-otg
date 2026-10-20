@@ -2,7 +2,7 @@
 
 ### New
 - **Live activity log:** tap the Live chip to watch new queries arrive as they happen. It pauses while you scroll or select, and stays off until you turn it on.
-- **Domain details:** a query's details now show what Control D's Dragonfly knows about the domain, like its category and a screenshot of the site.
+- **Domain details:** a query's details now show what Control D's Dragonfly knows about the domain, like its category, web server, certificate, registration and a screenshot of the site.
 
 ### Improved
 - Activity log: the record type and protocol now sit next to the time, so long domains have more room

@@ -77,6 +77,27 @@ class DomainIntelTest {
     }
 
     @Test
+    fun `the issuer label keeps the certificate's own name`() {
+        assertEquals("Let's Encrypt (YE2)", IntelTls("TLS 1.3", "CN=YE2, O=Let's Encrypt, C=US", "").issuerLabel)
+        assertEquals("Google Trust Services", report(playGoogleapis)!!.tls!!.issuerLabel)
+        assertEquals("Example CA", IntelTls("TLS 1.2", "CN=Example CA", "").issuerLabel)
+    }
+
+    @Test
+    fun `redirects are counted whether sent as a number or as the hops`() {
+        fun http(extra: String) = report("""{"success":true,"body":{"status":"complete","features":{"http":{"statusCode":200,"finalUrl":"https://a.b","contentType":"text/html"$extra}}}}""")!!.http!!
+        assertEquals(2, http(""","redirects":2""").redirects)
+        assertEquals(3, http(""","redirectChain":["a","b","c"]""").redirects)
+        assertNull(http("").redirects)
+    }
+
+    @Test
+    fun `a registrant without an organization goes by name`() {
+        val intel = report("""{"success":true,"body":{"status":"complete","features":{"whois":{"parsed":{"registrar":"MarkMonitor Inc.","registrant":{"name":"Domain Administrator","organization":""}}}}}}""")!!
+        assertEquals("Domain Administrator", intel.whois!!.organization)
+    }
+
+    @Test
     fun `sections Dragonfly has no data for are left out`() {
         val intel = report(playGoogleapis)!!
         assertNull(intel.whois)
@@ -87,8 +108,8 @@ class DomainIntelTest {
     @Test
     fun `whois, network log and screenshot are read when present`() {
         val intel = report(withWhoisNetlogScreenshot)!!
-        assertEquals(IntelWhois("MarkMonitor Inc.", "Netflix, Inc.", "1997-11-11T05:00:00Z", "2025-11-10T05:00:00Z"), intel.whois)
-        assertEquals(IntelNetlog(117, "www.google.com"), intel.netlog)
+        assertEquals(IntelWhois("MarkMonitor Inc.", "Netflix, Inc.", "1997-11-11T05:00:00Z", "2025-11-10T05:00:00Z", "2023-10-09T11:01:36Z"), intel.whois)
+        assertEquals(IntelNetlog(117, "www.google.com", listOf("API", "Document")), intel.netlog)
         assertEquals("https://api.dragonfly.controld.com/screenshots/netflix.com.png", intel.screenshotUrl)
     }
 

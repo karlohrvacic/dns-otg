@@ -566,27 +566,44 @@ data class DomainIntel(
 
 data class IntelCategory(val name: String, val confidence: Double, val label: String, val reasoning: String, val dangerous: Boolean)
 
-data class IntelHttp(val statusCode: Int, val finalUrl: String, val contentType: String)
+data class IntelHttp(val statusCode: Int, val finalUrl: String, val contentType: String, val redirects: Int? = null)
 
 data class IntelTls(val protocols: String, val issuer: String, val validUntil: String) {
+    private val parts get() = issuer.split(',').map { it.trim() }
+
     /** The certificate authority by name: its organization (O=…), else its common name (CN=…). */
-    val issuerName: String get() {
-        val parts = issuer.split(',').map { it.trim() }
-        return parts.firstOrNull { it.startsWith("O=") }?.removePrefix("O=")
+    val issuerName: String get() =
+        parts.firstOrNull { it.startsWith("O=") }?.removePrefix("O=")
             ?: parts.firstOrNull { it.startsWith("CN=") }?.removePrefix("CN=")
             ?: issuer
+
+    /** The issuing certificate's own name (CN=…) when the organization is shown instead, as in "Let's Encrypt (YE2)". */
+    val issuerLabel: String get() {
+        val cn = parts.firstOrNull { it.startsWith("CN=") }?.removePrefix("CN=")
+        return if (cn != null && cn != issuerName) "$issuerName ($cn)" else issuerName
     }
 }
 
-data class IntelWhois(val registrar: String, val organization: String, val created: String, val expires: String)
+data class IntelWhois(val registrar: String, val organization: String, val created: String, val expires: String, val updated: String = "")
 
-data class IntelNetlog(val total: Int, val topDomain: String)
+data class IntelNetlog(val total: Int, val topDomain: String, val types: List<String> = emptyList())
 
 /**
  * Dragonfly's report on a domain. Null when it has none: a domain it hasn't classified (a 404 error inside a
  * successful response) or a name it won't look at, such as _dmarc.google.com (400 "invalid domain"). Sections it
  * has nothing for come as {} and are left out.
  */
+/** How many redirects the site went through: a count, or the list of hops, depending on how Dragonfly sends it. */
+private fun redirectCount(http: JSONObject): Int? {
+    for (key in listOf("redirects", "redirectCount", "redirectChain")) {
+        when (val v = http.opt(key)) {
+            is Number -> return v.toInt()
+            is JSONArray -> return v.length()
+        }
+    }
+    return null
+}
+
 fun parseDomainIntel(o: JSONObject): DomainIntel? {
     if (!o.optBoolean("success")) {
         val error = o.optJSONObject("error")
@@ -603,11 +620,16 @@ fun parseDomainIntel(o: JSONObject): DomainIntel? {
             IntelCategory(it.optString("name"), it.optDouble("confidence", 0.0), it.optString("confidenceLabel"), it.optString("reasoning"), it.optBoolean("dangerous"))
         },
         screenshotUrl = section("screenshot")?.optStringOrNull("screenshotUrl"),
-        http = section("http")?.let { IntelHttp(it.optInt("statusCode"), it.optString("finalUrl"), it.optString("contentType")) },
+        http = section("http")?.let { IntelHttp(it.optInt("statusCode"), it.optString("finalUrl"), it.optString("contentType"), redirectCount(it)) },
         tls = section("tls")?.let { IntelTls(it.optString("supportedProtocols"), it.optString("issuer"), it.optString("validUntil")) },
         whois = section("whois")?.optJSONObject("parsed")?.takeIf { it.length() > 0 }?.let {
-            IntelWhois(it.optString("registrar"), it.optJSONObject("registrant")?.optString("organization").orEmpty(), it.optString("creationDate"), it.optString("expirationDate"))
+            val registrant = it.optJSONObject("registrant")
+            val owner = registrant?.optString("organization")?.takeIf { o -> o.isNotBlank() } ?: registrant?.optString("name").orEmpty()
+            IntelWhois(it.optString("registrar"), owner, it.optString("creationDate"), it.optString("expirationDate"), it.optString("lastUpdated"))
         },
-        netlog = section("netlog")?.let { IntelNetlog(it.optInt("total"), it.optString("topDomain")) },
+        netlog = section("netlog")?.let { n ->
+            val types = n.optJSONArray("types")
+            IntelNetlog(n.optInt("total"), n.optString("topDomain"), (0 until (types?.length() ?: 0)).map { types!!.optString(it) }.filter { it.isNotBlank() })
+        },
     )
 }
